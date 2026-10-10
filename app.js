@@ -801,21 +801,21 @@ function showApp() {
 // ─── HEADER ───────────────────────────────────────────────────────
 
 const pageTitles = {
-  dashboard: ['Dashboard', 'Visão geral da carteira previdenciária'],
-  clients: ['Clientes', 'Cadastro e histórico completo dos clientes'],
-  'client-detail': () => [currentClient()?.name || 'Cliente', 'Processos, documentos, prazos e depoimentos em um só lugar'],
-  'client-form': () => [state.clientFormId ? 'Editar Cliente' : 'Novo Cliente', 'Cadastro completo do cliente'],
-  documents: ['Documentos', 'Organizados por cliente e por processo'],
-  cases: ['Casos', 'Gestão de ações previdenciárias'],
-  'case-detail': () => [state.selectedCase?.title || 'Detalhe do Caso', state.selectedCase?.number || ''],
-  script: () => ['Roteiro Estratégico', state.selectedCase ? `${state.selectedCase.title}` : 'Selecione uma ação'],
-  timeline: () => ['Linha do Tempo Contributiva', state.selectedCase ? `${state.selectedCase.title}` : 'Períodos de trabalho e contribuição'],
-  'hearing-mode': () => ['Modo Audiência', state.selectedCase ? `${state.selectedCase.title}` : 'Condução da instrução'],
-  video: () => ['Depoimentos', state.selectedCase ? state.selectedCase.title : 'Selecione uma ação'],
-  reports: () => ['Relatórios e Peças', state.selectedCase ? state.selectedCase.title : 'Selecione uma ação'],
-  agenda: ['Agenda', 'Audiências, prazos e compromissos do escritório'],
-  'new-case': ['Novo Caso', 'Cadastro de ação previdenciária'],
-  settings: ['Configurações', 'Firebase · Groq AI · Escritório'],
+  dashboard: ['Início', 'Resumo do dia e atalhos'],
+  clients: ['Clientes', 'Cadastro, documentos e histórico de cada cliente'],
+  'client-detail': () => [currentClient()?.name || 'Cliente', 'Processos, documentos, prazos e depoimentos do cliente'],
+  'client-form': () => [state.clientFormId ? 'Editar cliente' : 'Novo cliente', 'Preencha os dados do cliente'],
+  documents: ['Documentos', 'Arquivos organizados por cliente e por processo'],
+  cases: ['Processos', 'Todas as ações previdenciárias do escritório'],
+  'case-detail': () => [state.selectedCase?.title || 'Processo', state.selectedCase?.number || ''],
+  timeline: () => ['Tempo de contribuição', state.selectedCase ? `Etapa 1 de 3 · ${state.selectedCase.title}` : 'Etapa 1 de 3 · Monte os períodos a partir do CNIS'],
+  script: () => ['Perguntas para a audiência', state.selectedCase ? `Etapa 2 de 3 · ${state.selectedCase.title}` : 'Etapa 2 de 3 · Roteiro para cada testemunha'],
+  'hearing-mode': () => ['Na audiência', state.selectedCase ? `Etapa 3 de 3 · ${state.selectedCase.title}` : 'Etapa 3 de 3 · Conduza e grave a audiência'],
+  video: () => ['Gravações de depoimentos', state.selectedCase ? state.selectedCase.title : 'Vídeos gravados com data, hora e local'],
+  reports: () => ['Peças e relatórios', state.selectedCase ? state.selectedCase.title : 'Gere memoriais e relatórios com IA'],
+  agenda: ['Agenda', 'Audiências, prazos e compromissos'],
+  'new-case': ['Novo processo', 'Cadastre uma ação previdenciária'],
+  settings: ['Configurações', 'Dados do escritório e inteligência artificial'],
 }
 
 function updateHeader(page) {
@@ -861,14 +861,7 @@ function renderPage(page) {
 // ─── DASHBOARD ────────────────────────────────────────────────────
 
 async function renderDashboard() {
-  set('main-content', `
-    <div class="grid-4" style="margin-bottom:24px">
-      ${[1,2,3,4].map(() => `<div class="card metric-card"><div class="skeleton" style="height:16px;width:60%;margin-bottom:10px"></div><div class="skeleton" style="height:26px;width:40%"></div></div>`).join('')}
-    </div>
-    <div id="dash-body">
-      <div style="text-align:center;padding:48px">${spinner('spinner-lg')}</div>
-    </div>
-  `)
+  set('main-content', `<div style="text-align:center;padding:64px">${spinner('spinner-lg')}</div>`)
 
   let cases = []
   try { cases = await getCases() } catch {}
@@ -878,72 +871,119 @@ async function renderDashboard() {
   if (state.selectedCase) cases = cases.map(c => (c.id === state.selectedCase.id ? state.selectedCase : c))
   state.cases = cases
   state.casesLoaded = true
+  await ensureClientsLoaded()
   updateAgendaBadge()
+  if (state.currentPage !== 'dashboard') return
 
-  const active = cases.filter(c => c.status === 'active').length
-  const closed = cases.filter(c => c.status === 'closed').length
-  const pending = cases.filter(c => c.status === 'pending').length
-  const highRisk = cases.filter(c => c.riskLevel === 'high').length
+  const events = collectEvents()
+  const openEvents = events.filter(e => bucketOf(e) !== 'done')
+  const urgent = openEvents.filter(e => ['overdue', 'today', 'week'].includes(bucketOf(e)))
+  const todo = (urgent.length ? urgent : openEvents).slice(0, 8)
+  const overdue = openEvents.filter(e => bucketOf(e) === 'overdue').length
+  const hearings30 = openEvents.filter(e => e.kind === 'audiencia' && daysUntil(e.date) <= 30).length
+  const activeCases = cases.filter(c => c.status !== 'closed').length
+  const activeClients = state.clients.filter(c => (c.status || 'active') === 'active').length
+  const pendingDocs = cases.filter(c => c.status !== 'closed').reduce((n, c) => n + pendingDocsOf(c).length, 0)
+  const highRisk = cases.filter(c => c.status !== 'closed' && c.riskLevel === 'high').length
+
+  const h = new Date().getHours()
+  const hello = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'
+  const rawFirst = String(state.currentUser?.name || '').split(/[\s._]+/)[0]
+  const firstName = rawFirst ? rawFirst[0].toUpperCase() + rawFirst.slice(1) : ''
+  const todayRaw = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  const today = todayRaw[0].toUpperCase() + todayRaw.slice(1)
+  const summary = overdue
+    ? `Atenção: ${overdue} prazo${overdue > 1 ? 's' : ''} atrasado${overdue > 1 ? 's' : ''}.`
+    : urgent.length ? `${urgent.length} compromisso${urgent.length > 1 ? 's' : ''} nos próximos 7 dias.` : 'Nenhum prazo urgente.'
 
   const demoBanner = !state.fbReady ? `
-    <div class="alert-warn" style="margin-bottom:20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>⚙️ <strong>Modo Demo</strong> — Firebase não configurado. Os dados ficam apenas nesta sessão.</span>
-      <button class="btn btn-sm btn-secondary" onclick="navigate('settings',document.querySelector('.nav-item[data-page=settings]'))" style="margin-left:auto">Configurar Firebase</button>
+    <div class="alert-warn" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span><strong>Modo de teste:</strong> sem conexão com o banco de dados. O que você cadastrar some ao fechar a página.</span>
     </div>` : ''
 
-  await ensureClientsLoaded()
-  const activeClients = state.clients.filter(c => (c.status || 'active') === 'active').length
-  const ev0 = collectEvents()
-  const overdueTasks = ev0.filter(e => bucketOf(e) === 'overdue').length
-  const openTasks = ev0.filter(e => bucketOf(e) !== 'done').length
-  const pendingDocsTotal = cases.filter(c => c.status !== 'closed').reduce((n, c) => n + pendingDocsOf(c).length, 0)
+  const ico = d => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`
+  const action = (icon, title, desc, onclick) => `
+    <button class="dash-action" onclick="${onclick}">
+      <span class="dash-action-icon">${ico(icon)}</span>
+      <span><b>${title}</b><small>${desc}</small></span>
+    </button>`
+  const number = (label, value, page, alert = false) => `
+    <button class="dash-number ${alert && value ? 'alert' : ''}" onclick="navigate('${page}',null)">
+      <span>${label}</span><b>${value}</b>
+    </button>`
 
   set('main-content', `
+    <div class="dash-hello">
+      <div>
+        <h2>${hello}${firstName ? ', ' + esc(firstName) : ''}</h2>
+        <p>${today}</p>
+      </div>
+      <span class="badge ${overdue ? 'badge-risk-high' : 'badge-neutral'}" style="font-size:14px;padding:6px 14px">${summary}</span>
+    </div>
     ${demoBanner}
     ${clientsSyncBanner()}
-    <div class="grid-4" style="margin-bottom:24px">
-      ${metricCard('Ações Ativas', active, 'Em andamento', 'var(--accent-blue)')}
-      ${metricCard('Pendentes', pending, 'Aguardando ação', 'var(--risk-med)')}
-      ${metricCard('Encerrados', closed, 'Total concluídos', 'var(--risk-low)')}
-      ${metricCard('Alto Risco', highRisk, 'Requer atenção', 'var(--risk-high)')}
-    </div>
-    <div class="grid-4" style="margin-bottom:24px">
-      <div onclick="navigate('clients',document.querySelector('.nav-item[data-page=clients]'))" style="cursor:pointer">${metricCard('Clientes Ativos', activeClients, `${state.clients.length} cadastrado(s)`, 'var(--accent-teal)')}</div>
-      <div onclick="navigate('agenda',document.querySelector('.nav-item[data-page=agenda]'))" style="cursor:pointer">${metricCard('Tarefas Pendentes', openTasks, overdueTasks ? `${overdueTasks} atrasada(s)` : 'Em dia', overdueTasks ? 'var(--risk-high)' : 'var(--accent-blue)')}</div>
-      <div onclick="navigate('documents',document.querySelector('.nav-item[data-page=documents]'))" style="cursor:pointer">${metricCard('Documentos Pendentes', pendingDocsTotal, 'Conforme checklist', 'var(--accent-gold)')}</div>
-      <div onclick="navigate('agenda',document.querySelector('.nav-item[data-page=agenda]'))" style="cursor:pointer">${metricCard('Audiências (30 dias)', ev0.filter(e => e.kind === 'audiencia' && bucketOf(e) !== 'done' && daysUntil(e.date) <= 30).length, 'Preparar roteiro', 'var(--accent-purple)')}</div>
+
+    <div class="dash-actions">
+      ${action('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/>', 'Novo cliente', 'Cadastrar dados e documentos', 'openNewClient()')}
+      ${action('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14h6"/>', 'Novo processo', 'Abrir uma ação previdenciária', "navigate('new-case',null)")}
+      ${action('<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/>', 'Preparar audiência', 'Tempo de contribuição e perguntas', "navigate('timeline',null)")}
+      ${action('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>', 'Gerar peça', 'Memoriais e relatórios com IA', "navigate('reports',null)")}
     </div>
 
-    ${agendaWidget()}
+    <div class="dash-cols">
+      <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
+        <div class="card" style="overflow:hidden">
+          <div class="dash-panel-head">
+            <span class="section-title">${urgent.length ? 'O que fazer agora' : 'Próximos compromissos'}</span>
+            <button class="btn btn-ghost btn-sm" onclick="navigate('agenda',null)">Ver agenda completa →</button>
+          </div>
+          ${todo.length ? todo.map(e => eventRow(e, true)).join('') : `
+            <div class="empty-state" style="padding:36px 20px">
+              <div class="empty-title">Nenhum compromisso por enquanto</div>
+              <div class="empty-desc">Ao cadastrar a data da audiência de um processo ou um prazo, ele aparece aqui.</div>
+              <div style="margin-top:16px"><button class="btn btn-secondary btn-sm" onclick="openTaskModal()">+ Adicionar prazo</button></div>
+            </div>`}
+        </div>
 
-    <div class="card" style="overflow:hidden">
-      <div style="padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-        <span class="section-title">Casos Recentes</span>
-        <button class="btn btn-ghost btn-sm" onclick="navigate('cases',document.querySelector('.nav-item[data-page=cases]'))">Ver todos →</button>
+        <div class="card" style="overflow:hidden">
+          <div class="dash-panel-head">
+            <span class="section-title">Processos recentes</span>
+            <button class="btn btn-ghost btn-sm" onclick="navigate('cases',null)">Ver todos →</button>
+          </div>
+          ${cases.length === 0 ? `
+            <div class="empty-state" style="padding:36px 20px">
+              <div class="empty-title">Nenhum processo cadastrado</div>
+              <div class="empty-desc">Comece cadastrando o cliente e depois o processo dele.</div>
+              <div style="margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+                <button class="btn btn-secondary btn-sm" onclick="openNewClient()">Novo cliente</button>
+                <button class="btn btn-primary btn-sm" onclick="navigate('new-case',null)">Novo processo</button>
+              </div>
+            </div>` : cases.slice(0, 6).map(c => `
+            <div class="dash-case-row" onclick="selectCase('${esc(c.id)}')">
+              <div class="cx-avatar" style="width:40px;height:40px;font-size:14px">${esc(initials(c.clientName || c.title))}</div>
+              <div class="dash-case-main">
+                <div class="dash-case-title">${esc(c.title || 'Sem título')}</div>
+                <div class="dash-case-sub">${esc(c.clientName || '—')}${c.number ? ' · ' + esc(c.number) : ''}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+                ${statusBadge(c.status)}
+                <span style="font-size:14.5px;color:var(--text-muted)">${c.nextHearing ? 'Audiência ' + fmt.date(c.nextHearing) : 'Sem audiência marcada'}</span>
+              </div>
+            </div>`).join('')}
+        </div>
       </div>
-      ${cases.length === 0
-        ? `<div class="empty-state"><div class="empty-icon">📁</div><div class="empty-title">Nenhum caso cadastrado</div><div class="empty-desc">Crie seu primeiro caso para começar.</div><div style="margin-top:16px"><button class="btn btn-primary btn-sm" onclick="navigate('new-case',null)">Criar Caso</button></div></div>`
-        : `<table>
-            <thead><tr><th>Ação / Segurado(a)</th><th>Status</th><th>Risco</th><th>Progresso</th><th>Próx. Audiência</th></tr></thead>
-            <tbody>
-              ${cases.slice(0,5).map(c => `
-                <tr style="cursor:pointer" onclick="selectCase('${c.id}')">
-                  <td>
-                    <div style="font-weight:500">${c.title}</div>
-                    <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">${c.number || '—'}</div>
-                  </td>
-                  <td>${statusBadge(c.status)}</td>
-                  <td>${riskBadge(c.riskLevel)}</td>
-                  <td style="width:120px">
-                    ${progressBar(c.completionPct || 0)}
-                    <span style="font-size:11px;color:var(--text-muted)">${c.completionPct || 0}%</span>
-                  </td>
-                  <td style="font-size:12px;color:var(--text-muted)">${c.nextHearing ? fmt.date(c.nextHearing) : '—'}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>`
-      }
+
+      <div class="card" style="overflow:hidden">
+        <div class="dash-panel-head"><span class="section-title">Resumo do escritório</span></div>
+        <div class="dash-numbers">
+          ${number('Clientes ativos', activeClients, 'clients')}
+          ${number('Processos em andamento', activeCases, 'cases')}
+          ${number('Audiências em 30 dias', hearings30, 'agenda')}
+          ${number('Prazos atrasados', overdue, 'agenda', true)}
+          ${number('Documentos faltando', pendingDocs, 'documents', true)}
+          ${number('Processos com risco alto', highRisk, 'cases', true)}
+        </div>
+      </div>
     </div>
   `)
 }
@@ -969,17 +1009,13 @@ function metricCard(label, value, sub, color) {
 async function renderCases(filters = {}) {
   set('main-content', `
     <div class="page-actions">
-      <input type="text" id="cases-search" placeholder="Buscar por título, segurado(a), NB ou nº do processo…" style="max-width:340px" oninput="filterCases()" />
+      <input type="text" id="cases-search" placeholder="Buscar por nome do cliente, título ou nº do processo…" oninput="filterCases()" />
       <select id="cases-status-filter" onchange="filterCases()">
         <option value="all">Todos os status</option>
         <option value="active">Ativo</option>
         <option value="pending">Pendente</option>
         <option value="closed">Encerrado</option>
       </select>
-      <button class="btn btn-primary btn-sm" onclick="navigate('new-case',null)" style="margin-left:auto">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        Novo Caso
-      </button>
     </div>
     <div id="cases-list">
       ${[1,2,3].map(() => `<div class="card" style="padding:20px;margin-bottom:12px"><div class="skeleton" style="height:16px;width:60%;margin-bottom:12px"></div><div class="skeleton" style="height:12px;width:40%"></div></div>`).join('')}
@@ -1002,7 +1038,7 @@ async function renderCases(filters = {}) {
 
 function renderCasesList(cases) {
   set('cases-list', cases.length === 0
-    ? `<div class="card"><div class="empty-state"><div class="empty-icon">📁</div><div class="empty-title">Nenhum caso encontrado</div><div class="empty-desc">Crie um novo caso para começar.</div><div style="margin-top:16px"><button class="btn btn-primary btn-sm" onclick="navigate('new-case',null)">Criar Caso</button></div></div></div>`
+    ? `<div class="card"><div class="empty-state"><div class="empty-icon">📁</div><div class="empty-title">Nenhum processo encontrado</div><div class="empty-desc">Cadastre um novo processo para começar.</div><div style="margin-top:16px"><button class="btn btn-primary btn-sm" onclick="navigate('new-case',null)">Novo processo</button></div></div></div>`
     : cases.map(c => `
       <div class="card card-interactive" style="padding:20px;margin-bottom:12px" onclick="selectCase('${c.id}')">
         <div style="display:flex;align-items:flex-start;gap:16px">
@@ -1012,15 +1048,15 @@ function renderCasesList(cases) {
               ${(c.tags || []).map(t => `<span class="badge badge-neutral">${t}</span>`).join('')}
             </div>
             <div style="font-size:15px;font-weight:600;margin-bottom:2px">${c.title}</div>
-            <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono)">${c.number || '—'}</div>
+            <div style="font-size:13.5px;color:var(--text-muted);font-family:var(--font-mono)">${c.number || '—'}</div>
             <div style="display:flex;gap:24px;margin-top:10px;flex-wrap:wrap">
               ${[['Segurado(a)', c.clientName], ['Benefício', c.benefit], ['Vara / JEF', c.court], ['NB', c.nb]].filter(f => f[1]).map(f => `
-                <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">${f[0]}</div><div style="font-size:13px;font-weight:500">${f[1]}</div></div>
+                <div><div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">${f[0]}</div><div style="font-size:14.5px;font-weight:500">${f[1]}</div></div>
               `).join('')}
             </div>
           </div>
           <div style="text-align:right;min-width:100px">
-            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Progresso</div>
+            <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:4px">Progresso</div>
             <div style="font-size:20px;font-weight:700;color:var(--accent-blue)">${c.completionPct || 0}%</div>
             <div style="width:90px;margin-top:6px">${progressBar(c.completionPct || 0, 'var(--accent-blue)', 4)}</div>
             ${c.aiAlerts > 0 ? `<div style="margin-top:8px"><span class="badge badge-gold">${c.aiAlerts} alertas IA</span></div>` : ''}
@@ -1065,7 +1101,7 @@ window.selectCase = function(id) {
 
 async function renderCaseDetail() {
   if (!state.selectedCase) {
-    set('main-content', `<div class="alert-warn">⚠ Nenhum caso selecionado. Acesse a lista de Casos e clique em um deles.</div>`)
+    set('main-content', `<div class="alert-warn">Nenhum processo escolhido. Abra a lista de Processos e clique em um deles.</div>`)
     return
   }
   const c = state.selectedCase
@@ -1080,7 +1116,7 @@ async function renderCaseDetail() {
             ${(c.tags || []).map(t => `<span class="badge badge-neutral">${t}</span>`).join('')}
           </div>
           <h1 style="font-size:20px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px">${c.title}</h1>
-          <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono)">${c.number || '—'}</div>
+          <div style="font-size:13.5px;color:var(--text-muted);font-family:var(--font-mono)">${c.number || '—'}</div>
           <div class="case-header-meta">
             ${[['Segurado(a)', c.clientName], ['Benefício', c.benefit], ['NB', c.nb], ['DER', c.der ? fmt.date(c.der) : ''], ['Vara / Juizado', c.court], ['Juiz(a)', c.judge], ['Valor da causa', c.value], ['Próx. Audiência', c.nextHearing ? fmt.date(c.nextHearing) : '—']].filter(f => f[1]).map(f => `
               <div><div class="case-meta-label">${f[0]}</div><div class="case-meta-value">${f[1]}</div></div>
@@ -1088,7 +1124,7 @@ async function renderCaseDetail() {
           </div>
         </div>
         <div style="text-align:right">
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Progresso geral</div>
+          <div style="font-size:12.5px;color:var(--text-muted);margin-bottom:6px">Progresso geral</div>
           <div id="case-pct" style="font-size:32px;font-weight:700;color:var(--accent-blue);letter-spacing:-0.03em">${c.completionPct || 0}%</div>
           <div id="case-pct-bar" style="width:120px;margin-top:8px">${progressBar(c.completionPct || 0, 'var(--accent-blue)', 6)}</div>
         </div>
@@ -1096,7 +1132,7 @@ async function renderCaseDetail() {
     </div>
 
     <div class="page-actions">
-      ${c.clientId ? `<button class="btn btn-secondary btn-sm" onclick="openClient('${esc(c.clientId)}')">👤 Ver Cliente</button>` : `<button class="btn btn-secondary btn-sm" onclick="openLinkClientModal()">👤 Vincular Cliente</button>`}
+      ${c.clientId ? `<button class="btn btn-secondary btn-sm" onclick="openClient('${esc(c.clientId)}')">👤 Ver cliente</button>` : `<button class="btn btn-secondary btn-sm" onclick="openLinkClientModal()">👤 Vincular Cliente</button>`}
       <button class="btn btn-secondary btn-sm" onclick="navigate('timeline',null)">Linha do Tempo (CNIS)</button>
       <button class="btn btn-primary btn-sm" onclick="navigate('script',null)">Roteiro de Oitiva</button>
       <button class="btn btn-secondary btn-sm" onclick="navigate('hearing-mode',null)">Modo Audiência</button>
@@ -1128,17 +1164,17 @@ function renderCaseOverviewTab(c, daysToHearing) {
           ${[['Documentos', c.documents || 0], ['Alertas IA', c.aiAlerts || 0], ['Dias até audiência', daysToHearing !== null ? (daysToHearing > 0 ? daysToHearing : 'Hoje!') : '—']].map(([l, v]) => `
             <div class="card" style="padding:16px;text-align:center">
               <div style="font-size:24px;font-weight:700">${v}</div>
-              <div style="font-size:11px;color:var(--text-muted)">${l}</div>
+              <div style="font-size:12.5px;color:var(--text-muted)">${l}</div>
             </div>
           `).join('')}
         </div>
-        ${c.notes ? `<div class="card" style="padding:18px"><div class="section-muted" style="margin-bottom:8px">Observações</div><div style="font-size:13px;color:var(--text-secondary);line-height:1.6">${c.notes}</div></div>` : ''}
+        ${c.notes ? `<div class="card" style="padding:18px"><div class="section-muted" style="margin-bottom:8px">Observações</div><div style="font-size:14.5px;color:var(--text-secondary);line-height:1.6">${c.notes}</div></div>` : ''}
       </div>
       <div style="display:flex;flex-direction:column;gap:14px">
         <div class="card" style="padding:16px">
           <div class="section-muted" style="margin-bottom:12px">Informações</div>
           ${[['Status', statusBadge(c.status)], ['Risco', riskBadge(c.riskLevel)], ['Criado em', c.createdAt?.toDate ? fmt.date(c.createdAt.toDate()) : (c.createdAt ? fmt.date(c.createdAt) : '—')]].map(([l, v]) => `
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:13.5px">
               <span style="color:var(--text-muted)">${l}</span><span>${v}</span>
             </div>
           `).join('')}
@@ -1183,8 +1219,8 @@ window.switchCaseTab = async function(btn, tab) {
              ['Gravar depoimento', 'Grave e transcreva depoimentos com análise automática.', 'video']].map(([t, d, p], i) => `
             <div style="display:flex;gap:12px;padding:12px 0;${i < 2 ? 'border-bottom:1px solid var(--border)' : ''}">
               <div style="flex:1">
-                <div style="font-size:13px;font-weight:500;margin-bottom:2px">${t}</div>
-                <div style="font-size:12px;color:var(--text-muted);line-height:1.4;margin-bottom:8px">${d}</div>
+                <div style="font-size:14.5px;font-weight:500;margin-bottom:2px">${t}</div>
+                <div style="font-size:13.5px;color:var(--text-muted);line-height:1.4;margin-bottom:8px">${d}</div>
                 <button class="btn btn-secondary btn-sm" onclick="navigate('${p}',document.querySelector('.nav-item[data-page=${p}]'))">Ir agora</button>
               </div>
             </div>`).join('')}
@@ -1212,12 +1248,12 @@ function renderDocsTab(c, docs) {
     <div id="upload-zone" class="upload-zone" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleDocDrop(event)" onclick="el('doc-file-input').click()">
       <div style="font-size:28px;margin-bottom:8px;opacity:.5">📎</div>
       <div style="font-size:14px;font-weight:500">Arraste arquivos ou clique para fazer upload</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:4px">PDF, MP3, MP4, WAV, DOCX — análise IA disponível para PDF e áudio/vídeo</div>
+      <div style="font-size:13.5px;color:var(--text-muted);margin-top:4px">PDF, MP3, MP4, WAV, DOCX — análise IA disponível para PDF e áudio/vídeo</div>
     </div>
     <input type="file" id="doc-file-input" style="display:none" onchange="handleDocFileSelect(event)" accept=".pdf,.docx,.doc,.mp4,.mp3,.wav,.webm,.ogg,.zip" multiple />
     <div id="upload-progress" style="display:none;margin-bottom:16px">
       <div style="max-width:300px">${progressBar(0, 'var(--accent-blue)', 6)}</div>
-      <div id="upload-progress-label" style="font-size:12px;color:var(--text-muted);margin-top:6px">Aguardando…</div>
+      <div id="upload-progress-label" style="font-size:13.5px;color:var(--text-muted);margin-top:6px">Aguardando…</div>
     </div>
     <div id="ai-doc-panel" style="display:none;margin-bottom:16px"></div>
     <div class="card" style="overflow:hidden">
@@ -1231,13 +1267,13 @@ function renderDocsTab(c, docs) {
                 <td><div style="display:flex;align-items:center;gap:10px">
                   <span style="font-size:20px">${d.type==='video'?'🎬':d.type==='audio'?'🎵':'📄'}</span>
                   <div>
-                    <div style="font-size:13px;font-weight:500">${d.name}</div>
-                    ${d._local ? `<span style="font-size:11px;color:var(--text-muted)">Sessão atual</span>` : d.url ? `<a href="${d.url}" target="_blank" style="font-size:11px;color:var(--accent-blue)">Abrir</a>` : ''}
+                    <div style="font-size:14.5px;font-weight:500">${d.name}</div>
+                    ${d._local ? `<span style="font-size:12.5px;color:var(--text-muted)">Sessão atual</span>` : d.url ? `<a href="${d.url}" target="_blank" style="font-size:12.5px;color:var(--accent-blue)">Abrir</a>` : ''}
                   </div>
                 </div></td>
                 <td><span class="badge badge-neutral">${(d.type||'file').toUpperCase()}</span></td>
-                <td style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono)">${d.size||'—'}</td>
-                <td style="font-size:12px;color:var(--text-muted)">${d.uploadedAt?.toDate ? fmt.date(d.uploadedAt.toDate()) : fmt.date(d.uploadedAt)}</td>
+                <td style="font-size:13.5px;color:var(--text-muted);font-family:var(--font-mono)">${d.size||'—'}</td>
+                <td style="font-size:13.5px;color:var(--text-muted)">${d.uploadedAt?.toDate ? fmt.date(d.uploadedAt.toDate()) : fmt.date(d.uploadedAt)}</td>
                 <td id="doc-status-${d.id}">${statusBadge(d.aiStatus||'pending')}</td>
                 <td>${d._local && (d.type==='pdf'||d.type==='audio'||d.type==='video')
                   ? `<button class="btn btn-secondary btn-sm" onclick="analyzeDocIA('${d.id}')">🔍 Analisar IA</button>`
@@ -1302,8 +1338,8 @@ async function uploadDoc(file) {
       panel.innerHTML = `
         <div class="card" style="padding:14px 18px;border-left:3px solid var(--accent-blue);display:flex;align-items:center;justify-content:space-between;gap:12px">
           <div>
-            <div style="font-size:13px;font-weight:500">${isPdf ? '📄' : '🎙️'} <strong>${file.name}</strong> pronto para análise</div>
-            <div style="font-size:12px;color:var(--text-muted)">${isPdf ? 'Análise jurídica de PDF com Groq AI' : 'Transcrição Whisper + análise jurídica com Groq AI'}</div>
+            <div style="font-size:14.5px;font-weight:500">${isPdf ? '📄' : '🎙️'} <strong>${file.name}</strong> pronto para análise</div>
+            <div style="font-size:13.5px;color:var(--text-muted)">${isPdf ? 'Análise jurídica de PDF com Groq AI' : 'Transcrição Whisper + análise jurídica com Groq AI'}</div>
           </div>
           <button class="btn btn-primary btn-sm" style="white-space:nowrap" onclick="analyzeDocIA('${localId}')">🔍 Analisar com IA</button>
         </div>`
@@ -1318,7 +1354,7 @@ window.analyzeDocIA = async function(docId) {
   const panel = el('ai-doc-panel')
   if (panel) {
     panel.style.display = 'block'
-    panel.innerHTML = `<div class="card" style="padding:20px"><div style="display:flex;align-items:center;gap:12px">${spinner('spinner-lg')}<div><div style="font-size:13px;font-weight:500">Analisando com Groq AI…</div><div style="font-size:12px;color:var(--text-muted)">${file.type.includes('pdf') ? 'Extraindo texto e interpretando juridicamente' : 'Transcrevendo com Whisper e analisando'}</div></div></div></div>`
+    panel.innerHTML = `<div class="card" style="padding:20px"><div style="display:flex;align-items:center;gap:12px">${spinner('spinner-lg')}<div><div style="font-size:14.5px;font-weight:500">Analisando com Groq AI…</div><div style="font-size:13.5px;color:var(--text-muted)">${file.type.includes('pdf') ? 'Extraindo texto e interpretando juridicamente' : 'Transcrevendo com Whisper e analisando'}</div></div></div></div>`
   }
 
   const statusCell = el(`doc-status-${docId}`)
@@ -1342,7 +1378,7 @@ window.analyzeDocIA = async function(docId) {
       try { await updateDoc(doc(state.fbDb, 'cases', state.selectedCase.id, 'documents', docId), { aiStatus: 'analyzed', riskLevel: result.riskLevel }) } catch {}
     }
   } catch (e) {
-    if (panel) panel.innerHTML = `<div class="card" style="padding:16px;border-left:3px solid var(--risk-high)"><div style="font-size:13px;font-weight:600;color:var(--risk-high);margin-bottom:6px">Erro na análise</div><div style="font-size:12px;color:var(--text-muted);line-height:1.6">${e.message}</div></div>`
+    if (panel) panel.innerHTML = `<div class="card" style="padding:16px;border-left:3px solid var(--risk-high)"><div style="font-size:14.5px;font-weight:600;color:var(--risk-high);margin-bottom:6px">Erro na análise</div><div style="font-size:13.5px;color:var(--text-muted);line-height:1.6">${e.message}</div></div>`
     if (statusCell) statusCell.innerHTML = statusBadge('pending')
   }
 }
@@ -1360,7 +1396,7 @@ function renderAIResultPanel(result, type, filename) {
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;gap:12px">
         <div>
           <div style="font-size:14px;font-weight:600">${type==='pdf'?'📄':'🎙️'} Análise IA — ${filename}</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${new Date().toLocaleString('pt-BR')}</div>
+          <div style="font-size:12.5px;color:var(--text-muted);margin-top:2px">${new Date().toLocaleString('pt-BR')}</div>
         </div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           ${result.riskLevel ? riskBadge(result.riskLevel) : ''}
@@ -1369,13 +1405,13 @@ function renderAIResultPanel(result, type, filename) {
           <button onclick="el('ai-doc-panel').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;padding:0;line-height:1">×</button>
         </div>
       </div>
-      <div style="font-size:13px;line-height:1.7;color:var(--text-secondary);padding:12px;background:var(--bg-elevated);border-radius:var(--radius-sm);margin-bottom:14px">${result.summary||''}</div>`
+      <div style="font-size:14.5px;line-height:1.7;color:var(--text-secondary);padding:12px;background:var(--bg-elevated);border-radius:var(--radius-sm);margin-bottom:14px">${result.summary||''}</div>`
 
   if (type === 'audio' && result.transcript) {
     html += `
       <div style="margin-bottom:14px">
-        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">📝 Transcrição</div>
-        <div style="font-size:12px;line-height:1.8;color:var(--text-secondary);max-height:160px;overflow-y:auto;padding:10px;background:var(--bg-elevated);border-radius:var(--radius-sm);border:1px solid var(--border)">${result.transcript}</div>
+        <div style="font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">📝 Transcrição</div>
+        <div style="font-size:13.5px;line-height:1.8;color:var(--text-secondary);max-height:160px;overflow-y:auto;padding:10px;background:var(--bg-elevated);border-radius:var(--radius-sm);border:1px solid var(--border)">${result.transcript}</div>
         <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="navigator.clipboard.writeText(${JSON.stringify(result.transcript || '')}).then(()=>this.textContent='Copiado!')">Copiar transcrição</button>
       </div>`
   }
@@ -1391,8 +1427,8 @@ function renderAIResultPanel(result, type, filename) {
     const items = (result[key] || []).filter(Boolean)
     if (!items.length) return
     html += `<div style="margin-bottom:12px">
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">${label}</div>
-      ${items.map(item => `<div style="font-size:12px;line-height:1.5;padding:7px 10px;margin-bottom:4px;background:var(--bg-elevated);border-radius:var(--radius-sm);border-left:2px solid ${color}">${item}</div>`).join('')}
+      <div style="font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">${label}</div>
+      ${items.map(item => `<div style="font-size:13.5px;line-height:1.5;padding:7px 10px;margin-bottom:4px;background:var(--bg-elevated);border-radius:var(--radius-sm);border-left:2px solid ${color}">${item}</div>`).join('')}
     </div>`
   })
 
@@ -1609,16 +1645,16 @@ function caseBar() {
   ).join('')
   return `
     <div class="lx-casebar">
-      <div class="lx-casebar-label">Ação em foco</div>
-      <select class="lx-casebar-select" onchange="pickCase(this.value)" aria-label="Selecionar ação">
-        <option value="" ${!c ? 'selected' : ''}>${state.cases.length ? 'Selecione uma ação…' : (state.casesLoaded ? 'Nenhuma ação cadastrada' : 'Carregando ações…')}</option>
+      <div class="lx-casebar-label">Processo:</div>
+      <select class="lx-casebar-select" onchange="pickCase(this.value)" aria-label="Escolher processo">
+        <option value="" ${!c ? 'selected' : ''}>${state.cases.length ? 'Escolha o processo…' : (state.casesLoaded ? 'Nenhum processo cadastrado' : 'Carregando processos…')}</option>
         ${opts}
       </select>
-      ${c?.clientId ? `<button class="btn btn-ghost btn-sm" onclick="openClient('${esc(c.clientId)}')">👤 Ver Cliente</button>` : ''}
+      ${c?.clientId ? `<button class="btn btn-ghost btn-sm" onclick="openClient('${esc(c.clientId)}')">👤 Ver cliente</button>` : ''}
       <span id="lx-save-state" class="lx-save-state"></span>
-      <button class="btn btn-ghost btn-sm" onclick="navigate('new-case',null)">+ Nova ação</button>
+      <button class="btn btn-ghost btn-sm" onclick="navigate('new-case',null)">+ Novo processo</button>
     </div>
-    ${!c ? `<div class="alert-warn">Escolha uma ação acima para que tudo o que você preencher fique salvo nela. Sem ação escolhida, você trabalha em rascunho e nada é gravado.</div>` : ''}`
+    ${!c ? `<div class="alert-warn">Escolha o processo acima. Sem processo escolhido, o que você preencher é só um rascunho e não fica salvo.</div>` : ''}`
 }
 
 window.pickCase = function (id) {
@@ -1649,15 +1685,15 @@ function renderScript() {
     ${caseBar()}
     <div class="ic-tabs">
       <button class="ic-tab ${tab === 'timeline' ? 'active' : ''}" onclick="switchScriptTab('timeline')">
-        1 · Linha do Tempo (CNIS)
+        1 · Tempo de contribuição
         ${hasTimeline ? `<span class="ic-tab-badge">${state.timeline.length}</span>` : ''}
       </button>
       <button class="ic-tab ${tab === 'form' ? 'active' : ''}" onclick="switchScriptTab('form')">
-        2 · Roteiro Estratégico
+        2 · Perguntas
         ${hasScript ? `<span class="ic-tab-badge">${state.scripts.length}</span>` : ''}
       </button>
       <button class="ic-tab ${tab === 'hearing' ? 'active' : ''}" onclick="switchScriptTab('hearing')">
-        3 · Modo Audiência
+        3 · Na audiência
       </button>
     </div>
 
@@ -1867,11 +1903,11 @@ function renderTimelineTab() {
     <div style="max-width:900px">
       <div style="margin-bottom:20px">
         <div style="font-size:15px;font-weight:600;margin-bottom:4px">Linha do Tempo Contributiva</div>
-        <div style="font-size:13px;color:var(--text-muted)">Cadastre os vínculos conforme CNIS, CTPS, PPP e demais documentos. O sistema soma o tempo sem duplicar concomitâncias, aponta lacunas e pontos fracos de prova, e leva tudo isso para o roteiro da oitiva.</div>
+        <div style="font-size:14.5px;color:var(--text-muted)">Cadastre os vínculos conforme CNIS, CTPS, PPP e demais documentos. O sistema soma o tempo sem duplicar concomitâncias, aponta lacunas e pontos fracos de prova, e leva tudo isso para o roteiro da oitiva.</div>
       </div>
 
       <div class="card" style="padding:18px;margin-bottom:16px">
-        <div style="font-size:13px;font-weight:600;margin-bottom:12px">Dados do(a) segurado(a) para o cálculo</div>
+        <div style="font-size:14.5px;font-weight:600;margin-bottom:12px">Dados do(a) segurado(a) para o cálculo</div>
         <div class="grid-3" style="gap:12px">
           <div class="field"><label>Sexo</label>
             <select id="ins-sexo" onchange="saveInsured()">
@@ -1886,7 +1922,7 @@ function renderTimelineTab() {
       </div>
 
       <div class="card" style="padding:20px;margin-bottom:20px;border:1px solid var(--accent-blue-border)">
-        <div style="font-size:13px;font-weight:600;margin-bottom:14px;color:var(--accent-blue)">${editing ? 'Editar período' : '+ Adicionar período'}</div>
+        <div style="font-size:14.5px;font-weight:600;margin-bottom:14px;color:var(--accent-blue)">${editing ? 'Editar período' : '+ Adicionar período'}</div>
         <div class="grid-2" style="gap:12px;margin-bottom:12px">
           <div class="field"><label>Empregador / Fonte de custeio *</label><input type="text" id="tl-empresa" value="${esc(v.empresa || '')}" placeholder="Ex.: Usina São João Ltda. / Contribuinte individual" /></div>
           <div class="field"><label>Cargo / Atividade *</label><input type="text" id="tl-cargo" value="${esc(v.cargo || '')}" placeholder="Ex.: Cortador de cana, soldador, lavrador" /></div>
@@ -1943,7 +1979,7 @@ function renderTimelineTab() {
 
       <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-primary" onclick="switchScriptTab('form')">Montar roteiro de oitiva →</button>
-        ${periods.length > 0 ? `<span style="font-size:12px;color:var(--text-muted)">Lacunas e pontos frágeis de prova vão para o roteiro automaticamente.</span>` : ''}
+        ${periods.length > 0 ? `<span style="font-size:13.5px;color:var(--text-muted)">Lacunas e pontos frágeis de prova vão para o roteiro automaticamente.</span>` : ''}
       </div>
     </div>`
 }
@@ -1983,8 +2019,8 @@ function renderTimelineAnalysis() {
   return `
     <div class="card" style="padding:18px;margin-bottom:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-        <div style="font-size:13px;font-weight:600">Análise da linha do tempo</div>
-        <span style="font-size:11px;color:var(--text-muted)">Estimativa por mês cheio — sem cálculo de dias</span>
+        <div style="font-size:14.5px;font-weight:600">Análise da linha do tempo</div>
+        <span style="font-size:12.5px;color:var(--text-muted)">Estimativa por mês cheio — sem cálculo de dias</span>
       </div>
       ${renderGantt(a)}
       <div class="lx-stat-grid">
@@ -1993,24 +2029,24 @@ function renderTimelineAnalysis() {
         ${stat('A partir de nov/2019', fmtMonthsSpan(a.after), 'após a EC 103/2019')}
         ${stat('Atividade rural', fmtMonthsSpan(a.ruralMonths), 'não conta como contribuição sem indenização')}
       </div>
-      ${a.overlaps.length ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:12px"><strong>Concomitâncias:</strong> ${a.overlaps.slice(0, 5).map(o => `${esc(o.a)} × ${esc(o.b)} (${fmtMonth(idxToYM(o.from))}–${fmtMonth(idxToYM(o.to))})`).join('; ')}</div>` : ''}
+      ${a.overlaps.length ? `<div style="font-size:13.5px;color:var(--text-secondary);margin-top:12px"><strong>Concomitâncias:</strong> ${a.overlaps.slice(0, 5).map(o => `${esc(o.a)} × ${esc(o.b)} (${fmtMonth(idxToYM(o.from))}–${fmtMonth(idxToYM(o.to))})`).join('; ')}</div>` : ''}
     </div>
     ${alerts.length ? `
       <div class="card" style="padding:18px;margin-bottom:14px">
-        <div style="font-size:13px;font-weight:600;margin-bottom:10px">Pontos de atenção (${a.alerts.length})</div>
+        <div style="font-size:14.5px;font-weight:600;margin-bottom:10px">Pontos de atenção (${a.alerts.length})</div>
         <div style="display:flex;flex-direction:column;gap:6px">
           ${alerts.map(x => `<div class="lx-alert-row ${x.level}"><span class="lx-alert-dot"></span><span>${esc(x.text)}</span></div>`).join('')}
         </div>
       </div>` : ''}
     <div class="card" style="padding:18px">
-      <div style="font-size:13px;font-weight:600;margin-bottom:10px">Simulação de requisitos (apoio)</div>
+      <div style="font-size:14.5px;font-weight:600;margin-bottom:10px">Simulação de requisitos (apoio)</div>
       ${sim
-        ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Referência: ${fmtBR(sim.ref)} · idade ${sim.ageTxt} · ${sim.filiadoAntes ? 'filiado(a) antes da EC 103/2019' : 'filiado(a) após a EC 103/2019'}</div>
+        ? `<div style="font-size:13.5px;color:var(--text-muted);margin-bottom:10px">Referência: ${fmtBR(sim.ref)} · idade ${sim.ageTxt} · ${sim.filiadoAntes ? 'filiado(a) antes da EC 103/2019' : 'filiado(a) após a EC 103/2019'}</div>
            ${sim.note ? `<div class="alert-warn" style="margin:0">${esc(sim.note)}</div>` : sim.items.map(it => `
              <div class="lx-req-row"><span class="badge ${it.ok ? 'badge-risk-low' : 'badge-risk-med'}">${it.ok ? 'Atende' : 'Não atende'}</span>
-               <div><div style="font-size:13px;font-weight:500">${it.name}</div><div style="font-size:12px;color:var(--text-muted)">${esc(it.detail)}</div></div></div>`).join('')}
-           <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5">Simulação de apoio: não inclui as regras de transição por pedágio nem idade mínima progressiva, e não substitui o cálculo oficial. Confira sempre a regra aplicável ao caso.</div>`
-        : `<div style="font-size:12px;color:var(--text-muted)">Informe sexo e data de nascimento acima para simular a regra por idade e a regra de pontos.</div>`}
+               <div><div style="font-size:14.5px;font-weight:500">${it.name}</div><div style="font-size:13.5px;color:var(--text-muted)">${esc(it.detail)}</div></div></div>`).join('')}
+           <div style="font-size:12.5px;color:var(--text-muted);margin-top:10px;line-height:1.5">Simulação de apoio: não inclui as regras de transição por pedágio nem idade mínima progressiva, e não substitui o cálculo oficial. Confira sempre a regra aplicável ao caso.</div>`
+        : `<div style="font-size:13.5px;color:var(--text-muted)">Informe sexo e data de nascimento acima para simular a regra por idade e a regra de pontos.</div>`}
     </div>`
 }
 
@@ -2046,11 +2082,11 @@ function renderTimelineCard(p, i) {
         <div class="tl-card-header">
           <div>
             <div style="font-size:14px;font-weight:600">${esc(p.empresa)}</div>
-            <div style="font-size:12px;color:var(--text-secondary)">${esc(p.cargo)}</div>
+            <div style="font-size:13.5px;color:var(--text-secondary)">${esc(p.cargo)}</div>
           </div>
           <div style="text-align:right;flex-shrink:0">
             <span class="badge" style="background:${color}18;color:${color};border:1px solid ${color}44">${label}${p.regime === 'especial' ? ' ' + (p.categoria || 25) + 'a' : ''}</span>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${duracao}</div>
+            <div style="font-size:12.5px;color:var(--text-muted);margin-top:4px">${duracao}</div>
           </div>
         </div>
         <div class="tl-card-dates">
@@ -2129,7 +2165,7 @@ function renderScriptFormTab() {
             <span style="font-size:16px;flex-shrink:0">📅</span>
             <div>
               <div style="font-weight:600;margin-bottom:4px">Linha do tempo ativa</div>
-              <div style="font-size:12px;color:var(--text-secondary);line-height:1.5">${state.timeline.length} período${state.timeline.length>1?'s':''} contributivo${state.timeline.length>1?'s':''} influenciarão o roteiro automaticamente.</div>
+              <div style="font-size:13.5px;color:var(--text-secondary);line-height:1.5">${state.timeline.length} período${state.timeline.length>1?'s':''} contributivo${state.timeline.length>1?'s':''} influenciarão o roteiro automaticamente.</div>
             </div>
             <button class="btn btn-ghost btn-sm" onclick="switchScriptTab('timeline')" style="margin-left:auto;flex-shrink:0">Editar</button>
           </div>` : `
@@ -2216,15 +2252,15 @@ function renderScriptFormTab() {
               <div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);align-items:center">
                 <div style="width:8px;height:8px;border-radius:50%;background:var(--accent-blue);flex-shrink:0;margin-top:3px"></div>
                 <div>
-                  <div style="font-size:12px;font-weight:500">${p.empresa}</div>
-                  <div style="font-size:11px;color:var(--text-muted)">${p.cargo} · ${fmtMonth(p.inicio)}–${p.fim?fmtMonth(p.fim):'atual'}</div>
+                  <div style="font-size:13.5px;font-weight:500">${p.empresa}</div>
+                  <div style="font-size:12.5px;color:var(--text-muted)">${p.cargo} · ${fmtMonth(p.inicio)}–${p.fim?fmtMonth(p.fim):'atual'}</div>
                 </div>
               </div>`).join('')}
           </div>` : ''}
 
         <div class="card" style="padding:18px">
           <div class="section-muted" style="margin-bottom:12px">Dicas Estratégicas</div>
-          <div style="display:flex;flex-direction:column;gap:9px;font-size:12px;color:var(--text-secondary)">
+          <div style="display:flex;flex-direction:column;gap:9px;font-size:13.5px;color:var(--text-secondary)">
             ${[
               'A prova testemunhal corrobora — não substitui — o início de prova material.',
               'Pergunte desde quando a testemunha conhece o(a) segurado(a) e como sabe do período.',
@@ -2287,7 +2323,7 @@ window.handleGenerateScript = async function () {
   const btn = el('script-gen-btn')
   const original = btn.innerHTML
   btn.disabled = true; btn.innerHTML = `${spinner()} Gerando roteiro estratégico…`
-  set('script-output', `<div style="text-align:center;padding:48px">${spinner('spinner-lg')}<div style="font-size:13px;color:var(--text-muted);margin-top:16px">A IA está analisando a linha do tempo e montando o roteiro…</div></div>`)
+  set('script-output', `<div style="text-align:center;padding:48px">${spinner('spinner-lg')}<div style="font-size:14.5px;color:var(--text-muted);margin-top:16px">A IA está analisando a linha do tempo e montando o roteiro…</div></div>`)
 
   try {
     const caseCtx = c ? `Caso: ${c.title}. Segurado(a): ${c.clientName || ''}. Benefício: ${c.benefit || ''}. NB: ${c.nb || ''}. DER: ${c.der || ''}. Vara/Juizado: ${c.court || ''}. ` : ''
@@ -2320,7 +2356,7 @@ function renderScriptResult(script) {
       <div class="card" style="padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <div>
           <div style="font-size:14px;font-weight:600">${esc(script.witness)}</div>
-          <div style="font-size:12px;color:var(--text-muted)">${script.questions.length} perguntas · ${esc(c?.title || 'sem ação vinculada')}</div>
+          <div style="font-size:13.5px;color:var(--text-muted)">${script.questions.length} perguntas · ${esc(c?.title || 'sem ação vinculada')}</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" onclick="switchScriptTab('hearing')">Conduzir oitiva →</button>
@@ -2337,17 +2373,17 @@ function renderScriptResult(script) {
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
                   <span class="badge badge-neutral">${esc(q.category)}</span>
                   ${q.aiFlag ? '<span class="badge badge-risk-high">⚠ Contradição</span>' : ''}
-                  <span style="margin-left:auto;font-size:11px;color:${prioColor[q.priority] || 'var(--text-muted)'}">${prioLabel[q.priority] || ''}</span>
+                  <span style="margin-left:auto;font-size:12.5px;color:${prioColor[q.priority] || 'var(--text-muted)'}">${prioLabel[q.priority] || ''}</span>
                 </div>
-                <p style="font-size:13px;line-height:1.6;margin:0">${esc(q.text)}</p>
-                ${q.rationale ? `<p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;font-style:italic">${esc(q.rationale)}</p>` : ''}
+                <p style="font-size:14.5px;line-height:1.6;margin:0">${esc(q.text)}</p>
+                ${q.rationale ? `<p style="font-size:12.5px;color:var(--text-muted);margin:6px 0 0;font-style:italic">${esc(q.rationale)}</p>` : ''}
               </div>
               <button class="btn btn-ghost btn-sm" title="Remover pergunta" onclick="removeQuestion(${i})" style="padding:2px 8px">✕</button>
             </div>
           </div>`).join('')}
       </div>
       <div class="card" style="padding:14px 16px;margin-top:12px">
-        <div style="font-size:12px;font-weight:600;margin-bottom:8px">Acrescentar pergunta própria</div>
+        <div style="font-size:13.5px;font-weight:600;margin-bottom:8px">Acrescentar pergunta própria</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <input type="text" id="manual-q" placeholder="Digite a pergunta…" style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')addManualQuestion()" />
           <select id="manual-q-prio" style="width:auto"><option value="normal">Normal</option><option value="high">Alta prioridade</option><option value="critical">Crítica</option></select>
@@ -2452,8 +2488,8 @@ function renderHearingLeft() {
 
   return `
     <div class="hearing-script-header">
-      <div style="font-size:13px;font-weight:600">${esc(script.witness)}</div>
-      <div style="font-size:11px;color:var(--text-muted)">${doneCount} de ${q.length} respondidas</div>
+      <div style="font-size:14.5px;font-weight:600">${esc(script.witness)}</div>
+      <div style="font-size:12.5px;color:var(--text-muted)">${doneCount} de ${q.length} respondidas</div>
       <div style="margin-left:auto"><button class="btn btn-ghost btn-sm" onclick="exportScript()" title="Exportar roteiro">Roteiro TXT</button></div>
     </div>
     <div class="lx-progress"><div style="width:${pct}%"></div></div>
@@ -2463,10 +2499,10 @@ function renderHearingLeft() {
         <span class="question-num" style="background:${pColor}22;color:${pColor}">${idx + 1}</span>
         <span class="badge badge-neutral">${esc(cur.category)}</span>
         ${cur.aiFlag ? '<span class="badge badge-risk-high">⚠ Contradição</span>' : ''}
-        <span style="margin-left:auto;font-size:11px;color:${pColor}">${idx + 1} / ${q.length}</span>
+        <span style="margin-left:auto;font-size:12.5px;color:${pColor}">${idx + 1} / ${q.length}</span>
       </div>
       <p style="font-size:15px;line-height:1.65;font-weight:500;margin:0">${esc(cur.text)}</p>
-      ${cur.rationale ? `<p style="font-size:12px;color:var(--text-muted);margin-top:8px;font-style:italic">${esc(cur.rationale)}</p>` : ''}
+      ${cur.rationale ? `<p style="font-size:13.5px;color:var(--text-muted);margin-top:8px;font-style:italic">${esc(cur.rationale)}</p>` : ''}
 
       <label class="lx-mini-label" for="hq-answer">Resposta do(a) depoente</label>
       <textarea id="hq-answer" class="hearing-notes-area" placeholder="Anote o que foi respondido, com as palavras do depoente…" oninput="setAnswer(${idx}, this.value)">${esc(st.answers[cur.id] || '')}</textarea>
@@ -2491,8 +2527,8 @@ function renderHearingLeft() {
           <span class="hq-num">${i + 1}</span>
           <span class="hq-text">${esc(question.text)}</span>
           ${mk ? `<span class="lx-dot" style="background:${MARKS[mk][1]}" title="${MARKS[mk][0]}"></span>` : ''}
-          ${st.done[question.id] ? '<span style="color:var(--risk-low);font-size:12px;flex-shrink:0">✓</span>' : ''}
-          ${question.aiFlag ? '<span style="color:var(--risk-high);font-size:11px;flex-shrink:0">⚠</span>' : ''}
+          ${st.done[question.id] ? '<span style="color:var(--risk-low);font-size:13.5px;flex-shrink:0">✓</span>' : ''}
+          ${question.aiFlag ? '<span style="color:var(--risk-high);font-size:12.5px;flex-shrink:0">⚠</span>' : ''}
         </div>`
       }).join('')}
     </div>`
@@ -2514,20 +2550,20 @@ function renderHearingRight() {
         <div class="lx-rec-icon" id="h-rec-icon">${_hRecording ? '<div class="record-dot"></div>' : '🎙'}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:14px;font-weight:600" id="h-rec-title">${_hRecording ? 'Gravando…' : 'Gravação da oitiva (áudio)'}</div>
-          <div style="font-size:12px;color:var(--text-muted)">${esc(script.witness)} · ${esc(state.selectedCase?.title || 'sem ação')}</div>
+          <div style="font-size:13.5px;color:var(--text-muted)">${esc(script.witness)} · ${esc(state.selectedCase?.title || 'sem ação')}</div>
         </div>
         <div id="h-rec-timer" style="font-family:var(--font-mono);font-size:20px;font-weight:700;color:var(--risk-high);display:${_hRecording ? 'block' : 'none'}">00:00</div>
       </div>
       <div id="h-rec-error" class="alert-error" style="display:none"></div>
       <div id="h-rec-btns" style="display:flex;gap:10px;flex-wrap:wrap">${recButtons()}</div>
       <input type="file" id="audio-upload-input" accept="audio/*,video/*" style="display:none" onchange="handleAudioUpload(event)" />
-      <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5">O áudio é transcrito e analisado pela IA. Confirme com o juízo se a gravação é permitida na audiência. Limite de cerca de 25 MB por arquivo.</div>
+      <div style="font-size:12.5px;color:var(--text-muted);margin-top:10px;line-height:1.5">O áudio é transcrito e analisado pela IA. Confirme com o juízo se a gravação é permitida na audiência. Limite de cerca de 25 MB por arquivo.</div>
     </div>
 
     <div id="hearing-audio-result">${renderAudioResults(st)}</div>
 
     <div class="card" style="padding:18px;margin-bottom:14px">
-      <div style="font-size:13px;font-weight:600;margin-bottom:10px">Anotações gerais da oitiva</div>
+      <div style="font-size:14.5px;font-weight:600;margin-bottom:10px">Anotações gerais da oitiva</div>
       <textarea id="hearing-notes" class="hearing-notes-area" placeholder="Reações, objeções, decisões do juízo, pontos para os memoriais…" style="min-height:120px" oninput="setHearingNotes(this.value)">${esc(st.notes || '')}</textarea>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="btn btn-primary btn-sm" id="h-sum-btn" onclick="generateHearingSummary()">Gerar síntese da oitiva (IA)</button>
@@ -2539,20 +2575,20 @@ function renderHearingRight() {
 
 function renderAudioResults(st) {
   const pending = _hPending > 0
-    ? `<div class="card" style="padding:16px;margin-bottom:14px;display:flex;align-items:center;gap:10px">${spinner()}<span style="font-size:13px;color:var(--text-secondary)">Transcrevendo e analisando o áudio…</span></div>` : ''
+    ? `<div class="card" style="padding:16px;margin-bottom:14px;display:flex;align-items:center;gap:10px">${spinner()}<span style="font-size:14.5px;color:var(--text-secondary)">Transcrevendo e analisando o áudio…</span></div>` : ''
   const items = (st.audio || []).slice().reverse().map(a => {
     if (a.status === 'error') return `<div class="card" style="padding:14px 16px;margin-bottom:14px"><div class="alert-error" style="margin:0">${esc(a.error)}</div></div>`
     return `
       <div class="card" style="padding:16px;margin-bottom:14px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-          <span style="font-size:13px;font-weight:600">Transcrição ${a.source === 'upload' ? '(arquivo enviado)' : '(gravação)'}</span>
+          <span style="font-size:14.5px;font-weight:600">Transcrição ${a.source === 'upload' ? '(arquivo enviado)' : '(gravação)'}</span>
           ${a.duration ? `<span class="badge badge-neutral">${esc(a.duration)}</span>` : ''}
           ${a.sentiment ? `<span class="badge badge-blue">${esc(a.sentiment)}</span>` : ''}
-          <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">${new Date(a.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+          <span style="margin-left:auto;font-size:12.5px;color:var(--text-muted)">${new Date(a.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
         </div>
-        ${a.summary ? `<p style="font-size:13px;line-height:1.55;margin:0 0 8px">${esc(a.summary)}</p>` : ''}
-        ${(a.contradictions || []).length ? `<div style="font-size:12px;color:var(--risk-high);margin-bottom:6px">⚠ ${(a.contradictions || []).map(esc).join(' · ')}</div>` : ''}
-        ${(a.aiFlags || []).length ? `<div style="font-size:12px;color:var(--risk-med);margin-bottom:6px">${(a.aiFlags || []).map(esc).join(' · ')}</div>` : ''}
+        ${a.summary ? `<p style="font-size:14.5px;line-height:1.55;margin:0 0 8px">${esc(a.summary)}</p>` : ''}
+        ${(a.contradictions || []).length ? `<div style="font-size:13.5px;color:var(--risk-high);margin-bottom:6px">⚠ ${(a.contradictions || []).map(esc).join(' · ')}</div>` : ''}
+        ${(a.aiFlags || []).length ? `<div style="font-size:13.5px;color:var(--risk-med);margin-bottom:6px">${(a.aiFlags || []).map(esc).join(' · ')}</div>` : ''}
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
           <button class="btn btn-secondary btn-sm" onclick="appendTranscript('${esc(a.id)}')">Colar transcrição nas anotações</button>
           <button class="btn btn-ghost btn-sm" onclick="copyTranscript('${esc(a.id)}')">Copiar</button>
@@ -2568,7 +2604,7 @@ function renderHearingSummary(st) {
   return `
     <div class="card fade-up" style="padding:18px;margin-bottom:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px;flex-wrap:wrap">
-        <div style="font-size:13px;font-weight:600">Síntese da oitiva</div>
+        <div style="font-size:14.5px;font-weight:600">Síntese da oitiva</div>
         <div style="display:flex;gap:6px">
           <button class="btn btn-ghost btn-sm" onclick="copyHearingSummary()">Copiar</button>
           <button class="btn btn-secondary btn-sm" onclick="navigate('reports',null)">Ir para relatórios e peças →</button>
@@ -2856,13 +2892,13 @@ function renderVideo() {
             </div>
             <div style="flex:1">
               <div style="font-size:14px;font-weight:600" id="rec-title">Câmera Pronta</div>
-              <div style="font-size:12px;color:var(--text-muted)" id="rec-sub">GPS e localização sendo carregados…</div>
+              <div style="font-size:13.5px;color:var(--text-muted)" id="rec-sub">GPS e localização sendo carregados…</div>
             </div>
             <div style="font-family:var(--font-mono);font-size:20px;font-weight:700;color:var(--risk-high);display:none" id="rec-timer">00:00</div>
           </div>
 
           <div id="rec-error" class="alert-error" style="display:none;margin-bottom:12px"></div>
-          <div id="gps-status-bar" style="font-size:11px;color:var(--text-muted);margin-bottom:12px;padding:8px 12px;background:var(--bg-elevated);border-radius:var(--radius-sm);border:1px solid var(--border)">
+          <div id="gps-status-bar" style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;padding:8px 12px;background:var(--bg-elevated);border-radius:var(--radius-sm);border:1px solid var(--border)">
             📍 Aguardando GPS…
           </div>
 
@@ -2889,13 +2925,13 @@ function renderVideo() {
 
           <div id="ffmpeg-progress" style="display:none;margin-top:14px">
             <div style="max-width:400px">${progressBar(0, 'var(--accent-teal)', 6)}</div>
-            <div id="ffmpeg-progress-label" style="font-size:12px;color:var(--text-muted);margin-top:6px">Processando…</div>
+            <div id="ffmpeg-progress-label" style="font-size:13.5px;color:var(--text-muted);margin-top:6px">Processando…</div>
           </div>
         </div>
 
         <div class="card" style="padding:20px;margin-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-            <div style="font-size:13px;font-weight:600">Anotações durante a gravação</div>
+            <div style="font-size:14.5px;font-weight:600">Anotações durante a gravação</div>
             ${(c?.scripts || []).length ? `<select id="rec-script-pick" style="max-width:260px" onchange="recPickScript()"><option value="">Roteiro de apoio (opcional)</option>${c.scripts.map(s => `<option value="${esc(s.id)}">${esc(s.witness)}</option>`).join('')}</select>` : ''}
           </div>
           <div style="display:flex;gap:8px;margin-bottom:12px">
@@ -2910,7 +2946,7 @@ function renderVideo() {
       <!-- Histórico de vídeos -->
       <div class="card" style="overflow:hidden">
         <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
-          <span style="font-size:13px;font-weight:600">Depoimentos Gravados${c ? ' — ' + c.title : ''}</span>
+          <span style="font-size:14.5px;font-weight:600">Depoimentos Gravados${c ? ' — ' + c.title : ''}</span>
           <span id="rec-count" class="badge badge-blue" style="display:none;margin-left:auto">0</span>
         </div>
         <div id="recordings-list">
@@ -2968,14 +3004,14 @@ function drawRecScriptQuestions() {
   const s = (state.selectedCase?.scripts || []).find(x => x.id === _videoScriptId)
   if (!s) { box.innerHTML = ''; return }
   box.innerHTML = `
-    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Perguntas do roteiro — ${esc(s.witness)}</div>
+    <div style="font-size:12.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Perguntas do roteiro — ${esc(s.witness)}</div>
     <div style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto;margin-bottom:10px">
       ${s.questions.map((q, i) => {
         const asked = _videoQ.find(x => x.qid === q.id)
         return `<label class="ic-check-item" style="justify-content:space-between">
           <span style="display:flex;gap:8px;align-items:center;flex:1;min-width:0">
             <input type="checkbox" ${asked ? 'checked' : ''} onchange="toggleRecQuestion('${esc(s.id)}',${q.id},${i})" />
-            <span style="font-size:12px;${asked ? 'text-decoration:line-through;opacity:.6' : ''}">${esc(q.text)}</span>
+            <span style="font-size:13.5px;${asked ? 'text-decoration:line-through;opacity:.6' : ''}">${esc(q.text)}</span>
           </span>
           ${asked ? `<span class="cx-time">${formatTime(asked.t)}</span>` : ''}
         </label>`
@@ -3002,7 +3038,7 @@ window.removeRecNote = function (i) { _videoNotes.splice(i, 1); drawRecNotesList
 function drawRecNotesList() {
   const box = el('rec-notes-list')
   if (!box) return
-  box.innerHTML = _videoNotes.map((n, i) => `<div class="cx-mini-row"><span class="cx-time">${formatTime(n.t)}</span><div style="flex:1;font-size:12px">${esc(n.text)}</div><button class="btn btn-ghost btn-sm" onclick="removeRecNote(${i})">✕</button></div>`).join('')
+  box.innerHTML = _videoNotes.map((n, i) => `<div class="cx-mini-row"><span class="cx-time">${formatTime(n.t)}</span><div style="flex:1;font-size:13.5px">${esc(n.text)}</div><button class="btn btn-ghost btn-sm" onclick="removeRecNote(${i})">✕</button></div>`).join('')
 }
 function resetRecAnnotations() { _videoNotes = []; _videoQ = []; _videoScriptId = ''; drawRecNotesList(); drawRecScriptQuestions() }
 
@@ -3413,7 +3449,7 @@ window.stopVideoRecording = function() {
   if (_videoMediaRecorder && _videoMediaRecorder.state !== 'inactive') {
     _videoMediaRecorder.stop()
   }
-  el('rec-btns').innerHTML = `<div style="font-size:13px;color:var(--text-muted)">${spinner()} Processando gravação…</div>`
+  el('rec-btns').innerHTML = `<div style="font-size:14.5px;color:var(--text-muted)">${spinner()} Processando gravação…</div>`
   el('rec-title').textContent = 'Processando…'
   el('rec-timer').style.display = 'none'
 }
@@ -3738,23 +3774,23 @@ function renderRecordingsList(recs) {
     const data = v.criadoEm
       ? (v.criadoEm.toDate ? v.criadoEm.toDate().toLocaleString('pt-BR') : new Date(v.criadoEm).toLocaleString('pt-BR'))
       : (v.date || '—')
-    const local = v._local ? `<span class="badge badge-gold" style="font-size:10px">local</span>` : `<span class="badge badge-blue" style="font-size:10px">Firebase ✓</span>`
+    const local = v._local ? `<span class="badge badge-gold" style="font-size:12px">local</span>` : `<span class="badge badge-blue" style="font-size:12px">Firebase ✓</span>`
     const cidadeUF = [v.cidade, v.estado].filter(Boolean).join('/')
 
     // Badge de status da análise IA
     let aiStatus = ''
     if (v._analisando) {
-      aiStatus = `<span class="badge badge-gold" style="font-size:10px">${spinner()} Analisando…</span>`
+      aiStatus = `<span class="badge badge-gold" style="font-size:12px">${spinner()} Analisando…</span>`
     } else if (v.analise?.erro) {
-      aiStatus = `<span class="badge badge-risk-high" style="font-size:10px">⚠ Erro IA</span>`
+      aiStatus = `<span class="badge badge-risk-high" style="font-size:12px">⚠ Erro IA</span>`
     } else if (v.analise) {
       const riskColor = { low: 'badge-risk-low', medium: 'badge-risk-med', high: 'badge-risk-high' }[v.analise.nivelRisco] || 'badge-neutral'
-      aiStatus = `<span class="badge badge-teal" style="font-size:10px">✓ IA Analisado</span><span class="badge ${riskColor}" style="font-size:10px">Risco ${fmt.risk(v.analise.nivelRisco)}</span>`
+      aiStatus = `<span class="badge badge-teal" style="font-size:12px">✓ IA Analisado</span><span class="badge ${riskColor}" style="font-size:12px">Risco ${fmt.risk(v.analise.nivelRisco)}</span>`
     }
 
     // Preview da transcrição
     const transcPreview = v.analise?.transcricao
-      ? `<div style="font-size:11px;color:var(--text-muted);margin-top:6px;padding:8px 10px;background:var(--bg-elevated);border-radius:var(--radius-sm);border:1px solid var(--border);max-height:60px;overflow:hidden;line-height:1.5">"${v.analise.transcricao.slice(0,160)}${v.analise.transcricao.length > 160 ? '…' : ''}"</div>`
+      ? `<div style="font-size:12.5px;color:var(--text-muted);margin-top:6px;padding:8px 10px;background:var(--bg-elevated);border-radius:var(--radius-sm);border:1px solid var(--border);max-height:60px;overflow:hidden;line-height:1.5">"${v.analise.transcricao.slice(0,160)}${v.analise.transcricao.length > 160 ? '…' : ''}"</div>`
       : ''
 
     return `
@@ -3762,8 +3798,8 @@ function renderRecordingsList(recs) {
       <div style="display:flex;align-items:flex-start;gap:14px">
         <div style="font-size:22px;margin-top:2px">🎥</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;margin-bottom:2px">${v.nomePessoa || v.name || '—'}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">${v.tipoDepoimento || '—'} · ${data} · ${v.duracao || '—'}${cidadeUF ? ' · ' + cidadeUF : ''}</div>
+          <div style="font-size:14.5px;font-weight:600;margin-bottom:2px">${v.nomePessoa || v.name || '—'}</div>
+          <div style="font-size:13.5px;color:var(--text-muted);margin-bottom:6px">${v.tipoDepoimento || '—'} · ${data} · ${v.duracao || '—'}${cidadeUF ? ' · ' + cidadeUF : ''}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px">${local}${aiStatus}</div>
           ${transcPreview}
         </div>
@@ -3799,7 +3835,7 @@ window.viewAiAnalysis = function(id) {
   container.innerHTML = `
     <div class="card fade-up" style="margin:16px 20px 8px;padding:20px;border:1px solid var(--accent-blue);background:var(--bg-elevated)">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div style="font-size:13px;font-weight:600;color:var(--accent-blue)">🤖 Análise IA — ${rec.nomePessoa}</div>
+        <div style="font-size:14.5px;font-weight:600;color:var(--accent-blue)">🤖 Análise IA — ${rec.nomePessoa}</div>
         <button class="btn btn-ghost btn-sm" onclick="document.getElementById('${panelId}').remove()">✕</button>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
@@ -3807,12 +3843,12 @@ window.viewAiAnalysis = function(id) {
         <span class="badge badge-neutral">Credibilidade: ${credLabel}</span>
         <span class="badge badge-neutral">Risco: ${riskLabel}</span>
       </div>
-      <div style="font-size:13px;line-height:1.7;color:var(--text-secondary);margin-bottom:14px;padding:12px;background:var(--bg-base);border-radius:var(--radius-sm)">${a.resumo || '—'}</div>
-      ${a.pontosChave?.length ? `<div style="margin-bottom:10px"><div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:6px">PONTOS-CHAVE</div>${a.pontosChave.map(p => `<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">• ${p}</div>`).join('')}</div>` : ''}
-      ${a.contradicoes?.length ? `<div style="margin-bottom:10px"><div style="font-size:11px;font-weight:600;color:var(--risk-high);margin-bottom:6px">⚠ CONTRADIÇÕES</div>${a.contradicoes.map(c => `<div style="font-size:12px;padding:3px 0;color:var(--risk-high)">• ${c}</div>`).join('')}</div>` : ''}
-      ${a.alertasJuridicos?.length ? `<div style="margin-bottom:10px"><div style="font-size:11px;font-weight:600;color:var(--risk-med);margin-bottom:6px">⚡ ALERTAS JURÍDICOS</div>${a.alertasJuridicos.map(al => `<div style="font-size:12px;padding:3px 0;color:var(--risk-med)">• ${al}</div>`).join('')}</div>` : ''}
-      ${a.recomendacoes?.length ? `<div style="margin-bottom:10px"><div style="font-size:11px;font-weight:600;color:var(--risk-low);margin-bottom:6px">✅ RECOMENDAÇÕES</div>${a.recomendacoes.map(r => `<div style="font-size:12px;padding:3px 0">• ${r}</div>`).join('')}</div>` : ''}
-      ${a.transcricao ? `<details style="margin-top:10px"><summary style="font-size:12px;font-weight:600;color:var(--text-muted);cursor:pointer">Ver transcrição completa</summary><div style="font-size:12px;line-height:1.8;color:var(--text-secondary);margin-top:8px;padding:10px;background:var(--bg-base);border-radius:var(--radius-sm);max-height:200px;overflow-y:auto">${a.transcricao}</div></details>` : ''}
+      <div style="font-size:14.5px;line-height:1.7;color:var(--text-secondary);margin-bottom:14px;padding:12px;background:var(--bg-base);border-radius:var(--radius-sm)">${a.resumo || '—'}</div>
+      ${a.pontosChave?.length ? `<div style="margin-bottom:10px"><div style="font-size:12.5px;font-weight:600;color:var(--text-muted);margin-bottom:6px">PONTOS-CHAVE</div>${a.pontosChave.map(p => `<div style="font-size:13.5px;padding:3px 0;border-bottom:1px solid var(--border)">• ${p}</div>`).join('')}</div>` : ''}
+      ${a.contradicoes?.length ? `<div style="margin-bottom:10px"><div style="font-size:12.5px;font-weight:600;color:var(--risk-high);margin-bottom:6px">⚠ CONTRADIÇÕES</div>${a.contradicoes.map(c => `<div style="font-size:13.5px;padding:3px 0;color:var(--risk-high)">• ${c}</div>`).join('')}</div>` : ''}
+      ${a.alertasJuridicos?.length ? `<div style="margin-bottom:10px"><div style="font-size:12.5px;font-weight:600;color:var(--risk-med);margin-bottom:6px">⚡ ALERTAS JURÍDICOS</div>${a.alertasJuridicos.map(al => `<div style="font-size:13.5px;padding:3px 0;color:var(--risk-med)">• ${al}</div>`).join('')}</div>` : ''}
+      ${a.recomendacoes?.length ? `<div style="margin-bottom:10px"><div style="font-size:12.5px;font-weight:600;color:var(--risk-low);margin-bottom:6px">✅ RECOMENDAÇÕES</div>${a.recomendacoes.map(r => `<div style="font-size:13.5px;padding:3px 0">• ${r}</div>`).join('')}</div>` : ''}
+      ${a.transcricao ? `<details style="margin-top:10px"><summary style="font-size:13.5px;font-weight:600;color:var(--text-muted);cursor:pointer">Ver transcrição completa</summary><div style="font-size:13.5px;line-height:1.8;color:var(--text-secondary);margin-top:8px;padding:10px;background:var(--bg-base);border-radius:var(--radius-sm);max-height:200px;overflow-y:auto">${a.transcricao}</div></details>` : ''}
     </div>`
 
   // Insere após o card do depoimento correspondente
@@ -3862,7 +3898,7 @@ window.watchRecording = function(id) {
   video.onerror = () => {
     video.style.display = 'none'
     const errMsg = document.createElement('div')
-    errMsg.style.cssText = 'color:#ff6b6b;padding:24px;text-align:center;font-size:13px'
+    errMsg.style.cssText = 'color:#ff6b6b;padding:24px;text-align:center;font-size:14.5px'
     errMsg.textContent = 'Não foi possível reproduzir o vídeo neste dispositivo. Use o botão Baixar Vídeo.'
     inner.insertBefore(errMsg, footer)
   }
@@ -4070,7 +4106,7 @@ function renderReports() {
   const cur = window._selectedReportType || 'probatorio'
   const a = analyzeTimeline()
   const withNotes = state.scripts.filter(s => { const st = state.hearing[s.id]; return st && (Object.values(st.answers || {}).some(Boolean) || st.notes || st.summary) }).length
-  const base = (ok, txt) => `<div style="display:flex;gap:8px;font-size:12px;padding:5px 0;color:${ok ? 'var(--text-secondary)' : 'var(--text-muted)'}"><span style="color:${ok ? 'var(--risk-low)' : 'var(--text-disabled)'}">${ok ? '✓' : '○'}</span>${txt}</div>`
+  const base = (ok, txt) => `<div style="display:flex;gap:8px;font-size:13.5px;padding:5px 0;color:${ok ? 'var(--text-secondary)' : 'var(--text-muted)'}"><span style="color:${ok ? 'var(--risk-low)' : 'var(--text-disabled)'}">${ok ? '✓' : '○'}</span>${txt}</div>`
 
   set('main-content', `
     ${caseBar()}
@@ -4078,7 +4114,7 @@ function renderReports() {
       <div>
         <div class="card" style="padding:22px;margin-bottom:20px">
           <div style="font-size:14px;font-weight:600;margin-bottom:6px">Gerar relatório ou peça com IA</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">A IA usa os dados da ação, a linha do tempo e as anotações da oitiva. O resultado é um rascunho: revise antes de usar.</div>
+          <div style="font-size:13.5px;color:var(--text-muted);margin-bottom:16px">A IA usa os dados da ação, a linha do tempo e as anotações da oitiva. O resultado é um rascunho: revise antes de usar.</div>
           <div class="lx-type-grid">
             ${REPORT_TYPES.map(([val, label, desc]) => `
               <button class="lx-type ${val === cur ? 'on' : ''}" data-type="${val}" onclick="selectReportType('${val}')">
@@ -4095,24 +4131,24 @@ function renderReports() {
           <div class="section-muted" style="margin-bottom:12px">O que a IA vai usar</div>
           ${c ? `
             <div style="font-size:14px;font-weight:600;margin-bottom:2px">${esc(c.title)}</div>
-            <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px">${esc(c.number || '—')}</div>
+            <div style="font-size:13.5px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:10px">${esc(c.number || '—')}</div>
             ${base(true, 'Dados da ação')}
             ${base(a.rows.length > 0, a.rows.length ? `Linha do tempo (${a.rows.length} períodos)` : 'Linha do tempo (vazia)')}
             ${base(state.scripts.length > 0, state.scripts.length ? `Roteiros (${state.scripts.length})` : 'Roteiros (nenhum)')}
             ${base(withNotes > 0, withNotes ? `Anotações da oitiva (${withNotes})` : 'Anotações da oitiva (nenhuma)')}
-          ` : '<div style="color:var(--text-muted);font-size:13px">Nenhuma ação selecionada</div>'}
+          ` : '<div style="color:var(--text-muted);font-size:14.5px">Nenhuma ação selecionada</div>'}
         </div>
         <div class="card" style="padding:18px">
           <div class="section-muted" style="margin-bottom:12px">Salvos nesta ação</div>
           ${state.reportsHistory.length ? state.reportsHistory.map(r => `
             <div class="lx-saved-row">
-              <div style="min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.label)}</div>
-              <div style="font-size:11px;color:var(--text-muted)">${new Date(r.generatedAt).toLocaleString('pt-BR')}</div></div>
+              <div style="min-width:0"><div style="font-size:14.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.label)}</div>
+              <div style="font-size:12.5px;color:var(--text-muted)">${new Date(r.generatedAt).toLocaleString('pt-BR')}</div></div>
               <div style="display:flex;gap:2px;flex-shrink:0">
                 <button class="btn btn-ghost btn-sm" onclick="openSavedReport('${esc(r.id)}')">Abrir</button>
                 <button class="btn btn-ghost btn-sm" style="color:var(--risk-high)" onclick="deleteSavedReport('${esc(r.id)}')">✕</button>
               </div>
-            </div>`).join('') : '<div style="font-size:12px;color:var(--text-muted)">Os relatórios gerados ficam guardados aqui.</div>'}
+            </div>`).join('') : '<div style="font-size:13.5px;color:var(--text-muted)">Os relatórios gerados ficam guardados aqui.</div>'}
         </div>
       </div>
     </div>`)
@@ -4129,7 +4165,7 @@ window.handleGenerateReport = async function () {
   if (!c) { alert('Selecione uma ação antes de gerar o relatório.'); return }
   const btn = el('report-gen-btn')
   btn.disabled = true; btn.innerHTML = `${spinner()} Gerando…`
-  set('report-output', `<div style="text-align:center;padding:40px">${spinner('spinner-lg')}<div style="font-size:13px;color:var(--text-muted);margin-top:16px">A IA está redigindo o documento…</div></div>`)
+  set('report-output', `<div style="text-align:center;padding:40px">${spinner('spinner-lg')}<div style="font-size:14.5px;color:var(--text-muted);margin-top:16px">A IA está redigindo o documento…</div></div>`)
   try {
     const rep = await generateReport(type, c)
     state.reportContent = rep
@@ -4148,7 +4184,7 @@ function reportResultHtml(rep) {
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap">
         <div>
           <div style="font-size:15px;font-weight:600">${esc(rep.label)}</div>
-          <div style="font-size:12px;color:var(--text-muted)">Gerado em ${new Date(rep.generatedAt).toLocaleString('pt-BR')} · você pode editar o texto abaixo</div>
+          <div style="font-size:13.5px;color:var(--text-muted)">Gerado em ${new Date(rep.generatedAt).toLocaleString('pt-BR')} · você pode editar o texto abaixo</div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-secondary btn-sm" onclick="copyReport()">Copiar</button>
@@ -4218,7 +4254,7 @@ function renderNewCase() {
         ${step === 1 ? `
           <div style="font-size:15px;font-weight:600;margin-bottom:24px">Dados Básicos da Ação</div>
           <div style="display:flex;flex-direction:column;gap:16px">
-            <div class="field"><label>Título do Caso *</label><input type="text" id="nc-title" value="${d.title || ''}" placeholder="Ex.: Maria da Silva x INSS — Aposentadoria Rural" /></div>
+            <div class="field"><label>Título do processo *</label><input type="text" id="nc-title" value="${d.title || ''}" placeholder="Ex.: Maria da Silva x INSS — Aposentadoria Rural" /></div>
             <div class="grid-2">
               <div class="field"><label>Número do Processo</label><input type="text" id="nc-number" value="${d.number || ''}" placeholder="0000000-00.0000.0.00.0000" /></div>
               <div class="field"><label>Espécie de Benefício</label><select id="nc-benefit">
@@ -4269,7 +4305,7 @@ function renderNewCase() {
         ` : `
           <div style="font-size:15px;font-weight:600;margin-bottom:24px">Revisão do Caso</div>
           ${Object.entries({ 'Título': d.title, 'Processo': d.number, 'Segurado(a)': d.clientName, 'Benefício': d.benefit, 'NB': d.nb, 'DER': d.der, 'Vara / Juizado': d.court, 'Juiz(a)': d.judge, 'Parte Ré': d.opposing, 'Valor da causa': d.value, 'Status': fmt.status(d.status), 'Risco': fmt.risk(d.riskLevel), 'Tags': (d.tags || []).join(', ') }).filter(([,v]) => v).map(([l, v]) => `
-            <div style="display:flex;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px">
+            <div style="display:flex;padding:10px 0;border-bottom:1px solid var(--border);font-size:14.5px">
               <div style="width:120px;color:var(--text-muted);flex-shrink:0">${l}</div>
               <div style="font-weight:500">${v}</div>
             </div>`).join('')}
@@ -4278,7 +4314,7 @@ function renderNewCase() {
           <button class="btn btn-ghost" onclick="newCaseNav(-1)">${step === 1 ? 'Cancelar' : '← Anterior'}</button>
           ${step < 4
             ? `<button class="btn btn-primary" onclick="newCaseNav(1)">Próximo →</button>`
-            : `<button class="btn btn-primary" id="nc-submit-btn" onclick="submitNewCase()">Criar Caso</button>`
+            : `<button class="btn btn-primary" id="nc-submit-btn" onclick="submitNewCase()">Criar processo</button>`
           }
         </div>
       </div>
@@ -4332,7 +4368,7 @@ window.submitNewCase = async function() {
     updateAgendaBadge()
     state.newCaseStep = 1; state.newCaseData = {}
     navigate('case-detail', null)
-  } catch (e) { alert('Erro ao criar caso: ' + e.message); btn.disabled = false; btn.textContent = 'Criar Caso' }
+  } catch (e) { alert('Erro ao criar processo: ' + e.message); btn.disabled = false; btn.textContent = 'Criar processo' }
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────────
@@ -4343,7 +4379,7 @@ function renderSettings() {
   set('main-content', `
     <div style="max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:24px">
 
-      <div class="alert-info" style="font-size:13px">
+      <div class="alert-info" style="font-size:14.5px">
         <strong>Como configurar:</strong> Crie um projeto no <a href="https://console.firebase.google.com" target="_blank" style="color:var(--accent-blue)">Firebase Console</a>, ative Authentication (e-mail/senha), Firestore e Storage. Cole as credenciais abaixo e clique em Salvar.
       </div>
 
@@ -4352,21 +4388,21 @@ function renderSettings() {
           <div style="width:40px;height:40px;border-radius:var(--radius-md);background:rgba(255,160,0,0.12);display:flex;align-items:center;justify-content:center;">🔥</div>
           <div>
             <div style="font-size:15px;font-weight:600">Firebase</div>
-            <div style="font-size:12px;color:var(--text-muted)">Autenticação, banco de dados e armazenamento de arquivos</div>
+            <div style="font-size:13.5px;color:var(--text-muted)">Autenticação, banco de dados e armazenamento de arquivos</div>
           </div>
           ${fbOk ? '<span class="badge badge-teal" style="margin-left:auto">✓ Conectado</span>' : '<span class="badge badge-neutral" style="margin-left:auto">Não configurado</span>'}
         </div>
         <div style="display:flex;flex-direction:column;gap:14px">
           <div class="grid-2">
-            <div class="field"><label>API Key *</label><input type="password" id="cfg-fb-key" value="${cfg.firebaseApiKey || ''}" placeholder="AIzaSy…" style="font-family:var(--font-mono);font-size:12px" /></div>
-            <div class="field"><label>Project ID *</label><input type="text" id="cfg-fb-pid" value="${cfg.firebaseProjectId || ''}" placeholder="meu-projeto-12345" style="font-family:var(--font-mono);font-size:12px" /></div>
+            <div class="field"><label>API Key *</label><input type="password" id="cfg-fb-key" value="${cfg.firebaseApiKey || ''}" placeholder="AIzaSy…" style="font-family:var(--font-mono);font-size:13.5px" /></div>
+            <div class="field"><label>Project ID *</label><input type="text" id="cfg-fb-pid" value="${cfg.firebaseProjectId || ''}" placeholder="meu-projeto-12345" style="font-family:var(--font-mono);font-size:13.5px" /></div>
           </div>
           <div class="grid-2">
-            <div class="field"><label>Auth Domain</label><input type="text" id="cfg-fb-auth" value="${cfg.firebaseAuthDomain || ''}" placeholder="projeto.firebaseapp.com" style="font-family:var(--font-mono);font-size:12px" /></div>
-            <div class="field"><label>App ID</label><input type="password" id="cfg-fb-appid" value="${cfg.firebaseAppId || ''}" placeholder="1:000000:web:abc…" style="font-family:var(--font-mono);font-size:12px" /></div>
+            <div class="field"><label>Auth Domain</label><input type="text" id="cfg-fb-auth" value="${cfg.firebaseAuthDomain || ''}" placeholder="projeto.firebaseapp.com" style="font-family:var(--font-mono);font-size:13.5px" /></div>
+            <div class="field"><label>App ID</label><input type="password" id="cfg-fb-appid" value="${cfg.firebaseAppId || ''}" placeholder="1:000000:web:abc…" style="font-family:var(--font-mono);font-size:13.5px" /></div>
           </div>
-          <div class="field"><label>Storage Bucket (obrigatório para upload de arquivos)</label><input type="text" id="cfg-fb-bucket" value="${cfg.firebaseStorageBucket || ''}" placeholder="projeto.appspot.com" style="font-family:var(--font-mono);font-size:12px" /></div>
-          <div class="field"><label>Messaging Sender ID</label><input type="text" id="cfg-fb-sender" value="${cfg.firebaseMessagingSenderId || ''}" placeholder="000000000000" style="font-family:var(--font-mono);font-size:12px" /></div>
+          <div class="field"><label>Storage Bucket (obrigatório para upload de arquivos)</label><input type="text" id="cfg-fb-bucket" value="${cfg.firebaseStorageBucket || ''}" placeholder="projeto.appspot.com" style="font-family:var(--font-mono);font-size:13.5px" /></div>
+          <div class="field"><label>Messaging Sender ID</label><input type="text" id="cfg-fb-sender" value="${cfg.firebaseMessagingSenderId || ''}" placeholder="000000000000" style="font-family:var(--font-mono);font-size:13.5px" /></div>
         </div>
       </div>
 
@@ -4375,11 +4411,11 @@ function renderSettings() {
           <div style="width:40px;height:40px;border-radius:var(--radius-md);background:var(--accent-blue-subtle);display:flex;align-items:center;justify-content:center;color:var(--accent-blue)">⚡</div>
           <div>
             <div style="font-size:15px;font-weight:600">Groq AI</div>
-            <div style="font-size:12px;color:var(--text-muted)">Motor de IA para roteiros previdenciários, análises e relatórios</div>
+            <div style="font-size:13.5px;color:var(--text-muted)">Motor de IA para roteiros previdenciários, análises e relatórios</div>
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:14px">
-          <div class="field"><label>API Key * — obtenha em <a href="https://console.groq.com" target="_blank" style="color:var(--accent-blue)">console.groq.com</a></label><input type="password" id="cfg-groq-key" value="${cfg.groqApiKey || ''}" placeholder="gsk_…" style="font-family:var(--font-mono);font-size:12px" /></div>
+          <div class="field"><label>API Key * — obtenha em <a href="https://console.groq.com" target="_blank" style="color:var(--accent-blue)">console.groq.com</a></label><input type="password" id="cfg-groq-key" value="${cfg.groqApiKey || ''}" placeholder="gsk_…" style="font-family:var(--font-mono);font-size:13.5px" /></div>
           <div class="field">
             <label>Modelo</label>
             <select id="cfg-groq-model">
@@ -4408,7 +4444,7 @@ function renderSettings() {
       </div>
 
       <div style="display:flex;gap:12px;justify-content:flex-end;align-items:center">
-        <span id="cfg-saved" style="font-size:13px;color:var(--risk-low);display:none">✓ Configurações salvas!</span>
+        <span id="cfg-saved" style="font-size:14.5px;color:var(--risk-low);display:none">✓ Configurações salvas!</span>
         <button class="btn btn-primary" id="cfg-save-btn" onclick="saveSettings()">Salvar Configurações</button>
       </div>
     </div>
@@ -4423,19 +4459,19 @@ window.testGroq = async function() {
   set('groq-test-result', '')
   try {
     const res = await groqChat([{ role: 'user', content: 'Responda apenas: OK' }], 'Responda somente: OK', { apiKey: key, model })
-    set('groq-test-result', `<div style="background:var(--risk-low-subtle);border:1px solid rgba(34,197,94,0.2);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;color:var(--risk-low)">✓ Groq conectado! Modelo: ${model}. Resposta: ${res.trim()}</div>`)
+    set('groq-test-result', `<div style="background:var(--risk-low-subtle);border:1px solid rgba(34,197,94,0.2);border-radius:var(--radius-sm);padding:8px 12px;font-size:13.5px;color:var(--risk-low)">✓ Groq conectado! Modelo: ${model}. Resposta: ${res.trim()}</div>`)
   } catch (e) {
     // Se o modelo não existe, mostra os que a conta realmente tem
     let extra = ''
     try {
       const ids = await listGroqModels(key)
       extra = ids.length
-        ? `<div style="margin-top:8px;color:var(--text-secondary)">Modelos disponíveis na sua conta:<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${ids.map(id => `<button class="btn btn-ghost btn-sm" style="font-family:var(--font-mono);font-size:11px;padding:2px 8px" onclick="useGroqModel('${id}')">${id}</button>`).join('')}</div><div style="margin-top:6px;font-size:11px;color:var(--text-muted)">Clique em um para selecioná-lo.</div></div>`
+        ? `<div style="margin-top:8px;color:var(--text-secondary)">Modelos disponíveis na sua conta:<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${ids.map(id => `<button class="btn btn-ghost btn-sm" style="font-family:var(--font-mono);font-size:12.5px;padding:2px 8px" onclick="useGroqModel('${id}')">${id}</button>`).join('')}</div><div style="margin-top:6px;font-size:12.5px;color:var(--text-muted)">Clique em um para selecioná-lo.</div></div>`
         : ''
     } catch (e2) {
       extra = `<div style="margin-top:8px;color:var(--text-muted)">Não foi possível listar os modelos: ${e2.message}</div>`
     }
-    set('groq-test-result', `<div style="background:var(--risk-high-subtle);border:1px solid rgba(239,68,68,0.2);border-radius:var(--radius-sm);padding:10px 12px;font-size:12px;color:var(--risk-high)">✗ Erro com o modelo <span style="font-family:var(--font-mono)">${model}</span>: ${e.message}${extra}</div>`)
+    set('groq-test-result', `<div style="background:var(--risk-high-subtle);border:1px solid rgba(239,68,68,0.2);border-radius:var(--radius-sm);padding:10px 12px;font-size:13.5px;color:var(--risk-high)">✗ Erro com o modelo <span style="font-family:var(--font-mono)">${model}</span>: ${e.message}${extra}</div>`)
   }
   btn.disabled = false; btn.textContent = 'Testar conexão Groq'
 }
@@ -4448,7 +4484,7 @@ window.useGroqModel = function(id) {
   }
   sel.value = id
   window.saveSettings()
-  set('groq-test-result', `<div style="background:var(--accent-blue-subtle);border:1px solid var(--accent-blue-border);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;color:var(--accent-blue)">Modelo <span style="font-family:var(--font-mono)">${id}</span> selecionado e salvo. Clique em "Testar conexão Groq".</div>`)
+  set('groq-test-result', `<div style="background:var(--accent-blue-subtle);border:1px solid var(--accent-blue-border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13.5px;color:var(--accent-blue)">Modelo <span style="font-family:var(--font-mono)">${id}</span> selecionado e salvo. Clique em "Testar conexão Groq".</div>`)
 }
 
 window.loadGroqModels = async function() {
@@ -4461,9 +4497,9 @@ window.loadGroqModels = async function() {
     const atual = sel.value
     sel.innerHTML = ids.map(id => `<option value="${id}" ${id===atual?'selected':''}>${id}</option>`).join('')
     if (!ids.includes(atual) && ids.length) sel.value = ids[0]
-    set('groq-test-result', `<div style="background:var(--risk-low-subtle);border:1px solid rgba(34,197,94,0.2);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;color:var(--risk-low)">✓ ${ids.length} modelo(s) carregado(s) da sua conta. Escolha um e salve.</div>`)
+    set('groq-test-result', `<div style="background:var(--risk-low-subtle);border:1px solid rgba(34,197,94,0.2);border-radius:var(--radius-sm);padding:8px 12px;font-size:13.5px;color:var(--risk-low)">✓ ${ids.length} modelo(s) carregado(s) da sua conta. Escolha um e salve.</div>`)
   } catch (e) {
-    set('groq-test-result', `<div style="background:var(--risk-high-subtle);border:1px solid rgba(239,68,68,0.2);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;color:var(--risk-high)">✗ ${e.message}</div>`)
+    set('groq-test-result', `<div style="background:var(--risk-high-subtle);border:1px solid rgba(239,68,68,0.2);border-radius:var(--radius-sm);padding:8px 12px;font-size:13.5px;color:var(--risk-high)">✗ ${e.message}</div>`)
   }
   btn.disabled = false; btn.textContent = 'Carregar modelos da minha conta'
 }
@@ -4554,7 +4590,7 @@ window.sendChat = async function() {
     if (loadingMsg) loadingMsg.querySelector('.chat-bubble').textContent = reply
   } catch (e) {
     const loadingMsg = el(loadingId)
-    if (loadingMsg) loadingMsg.querySelector('.chat-bubble').innerHTML = `<span style="color:var(--risk-high);font-size:12px">${e.message}</span>`
+    if (loadingMsg) loadingMsg.querySelector('.chat-bubble').innerHTML = `<span style="color:var(--risk-high);font-size:13.5px">${e.message}</span>`
   }
   state.chatLoading = false
   scrollChat()
@@ -4728,7 +4764,7 @@ function renderAgenda() {
         </div>
         <div class="field" style="margin-bottom:14px"><label>Observação</label><input type="text" id="ag-notes" placeholder="Local, providência, documento a juntar…" /></div>
         <div style="display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="addAgendaEvent()">Salvar na agenda</button><button class="btn btn-ghost btn-sm" onclick="toggleAgendaForm()">Cancelar</button></div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:10px">Ao escolher "Audiência", a data passa a ser a próxima audiência da ação.</div>
+        <div style="font-size:12.5px;color:var(--text-muted);margin-top:10px">Ao escolher "Audiência", a data passa a ser a próxima audiência da ação.</div>
       </div>` : ''}
 
     ${all.length === 0 ? `
@@ -4869,12 +4905,12 @@ function renderChecklistTab(c) {
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
           <div>
             <div style="font-size:14px;font-weight:600">Documentos do caso</div>
-            <div style="font-size:12px;color:var(--text-muted)">Lista sugerida para: ${esc(c.benefit || 'ação previdenciária')}. O progresso da ação é calculado por este checklist.</div>
+            <div style="font-size:13.5px;color:var(--text-muted)">Lista sugerida para: ${esc(c.benefit || 'ação previdenciária')}. O progresso da ação é calculado por este checklist.</div>
           </div>
           <div style="font-size:24px;font-weight:700;color:var(--accent-blue)">${pct}%</div>
         </div>
         ${progressBar(pct, 'var(--accent-blue)', 6)}
-        <div style="font-size:12px;color:var(--text-muted);margin-top:8px">${done} de ${items.length} documentos reunidos</div>
+        <div style="font-size:13.5px;color:var(--text-muted);margin-top:8px">${done} de ${items.length} documentos reunidos</div>
       </div>
       <div class="card" style="padding:10px 8px;margin-bottom:14px">
         ${items.map(i => `
@@ -5245,12 +5281,12 @@ async function ensureClientForCase(d) {
 }
 
 const rulesSnippet = () => `
-  <details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--accent-blue)">Ver regras sugeridas (Firestore e Storage)</summary>
-    <div style="font-size:12px;color:var(--text-secondary);margin:8px 0 4px">Firestore → Regras, dentro de <code>match /databases/{database}/documents</code>:</div>
+  <details style="margin-top:8px"><summary style="cursor:pointer;font-size:13.5px;color:var(--accent-blue)">Ver regras sugeridas (Firestore e Storage)</summary>
+    <div style="font-size:13.5px;color:var(--text-secondary);margin:8px 0 4px">Firestore → Regras, dentro de <code>match /databases/{database}/documents</code>:</div>
     <pre class="cx-code">match /clients/{clientId} {
   allow read, write: if request.auth != null;
 }</pre>
-    <div style="font-size:12px;color:var(--text-secondary);margin:8px 0 4px">Storage → Regras, dentro de <code>match /b/{bucket}/o</code>:</div>
+    <div style="font-size:13.5px;color:var(--text-secondary);margin:8px 0 4px">Storage → Regras, dentro de <code>match /b/{bucket}/o</code>:</div>
     <pre class="cx-code">match /clients/{clientId}/{allPaths=**} {
   allow read, write: if request.auth != null;
 }</pre>
@@ -5301,7 +5337,7 @@ window.openTaskModal = function (pre = {}) {
         <div class="field"><label>Horário (opcional)</label><input type="time" id="tk-time" style="${dateStyle}" /></div>
       </div>
       <div class="field"><label>Observação</label><input type="text" id="tk-notes" placeholder="Local, providência, documento a juntar…" /></div>
-      <div style="font-size:11px;color:var(--text-muted)">Audiência precisa de um processo — a data passa a ser a próxima audiência dele. Prazos ligados a um processo aparecem também na aba Prazos dele.</div>
+      <div style="font-size:12.5px;color:var(--text-muted)">Audiência precisa de um processo — a data passa a ser a próxima audiência dele. Prazos ligados a um processo aparecem também na aba Prazos dele.</div>
     </div>`,
     `<button class="btn btn-ghost" onclick="closeCxModal('cx-task')">Cancelar</button><button class="btn btn-primary" onclick="saveTaskModal()">Salvar</button>`)
   setTimeout(() => el('tk-title')?.focus(), 50)
@@ -5519,7 +5555,7 @@ function renderClientForm() {
             <div class="field"><label>Como chegou ao escritório</label><input type="text" id="cf-origin" value="${v('origin')}" placeholder="Indicação, sindicato, redes sociais…" /></div>
           </div>
           <div class="field"><label>Observações internas</label><textarea id="cf-notes" placeholder="Situação do cliente, particularidades, combinados…">${v('notes')}</textarea></div>
-          <div style="font-size:11px;color:var(--text-muted)">Não guarde senhas (Meu INSS, gov.br) neste cadastro.</div>
+          <div style="font-size:12.5px;color:var(--text-muted)">Não guarde senhas (Meu INSS, gov.br) neste cadastro.</div>
         </div>
       </div>
 
@@ -5709,26 +5745,26 @@ function cxTabResumo(cl) {
             ${kv('Telefone / WhatsApp', esc(cl.phone))}${kv('Recado', esc(cl.phone2))}${kv('E-mail', esc(cl.email))}
             ${kv('Endereço', esc(addr))}${kv('Zona', cl.zone ? (cl.zone === 'rural' ? 'Rural' : 'Urbana') : '')}${kv('Comunidade', esc(cl.community))}
           </div>
-          ${!(cl.phone || cl.email || addr) ? '<div style="font-size:12px;color:var(--text-muted)">Sem contato cadastrado. <a href="#" style="color:var(--accent-blue)" onclick="openEditClient(\'' + esc(cl.id) + '\');return false">Completar cadastro</a></div>' : ''}
+          ${!(cl.phone || cl.email || addr) ? '<div style="font-size:13.5px;color:var(--text-muted)">Sem contato cadastrado. <a href="#" style="color:var(--accent-blue)" onclick="openEditClient(\'' + esc(cl.id) + '\');return false">Completar cadastro</a></div>' : ''}
         </div>
-        ${cl.notes ? `<div class="card" style="padding:18px"><div class="section-muted" style="margin-bottom:8px">Observações</div><div style="font-size:13px;color:var(--text-secondary);line-height:1.6;white-space:pre-wrap">${esc(cl.notes)}</div></div>` : ''}
+        ${cl.notes ? `<div class="card" style="padding:18px"><div class="section-muted" style="margin-bottom:8px">Observações</div><div style="font-size:14.5px;color:var(--text-secondary);line-height:1.6;white-space:pre-wrap">${esc(cl.notes)}</div></div>` : ''}
         <div class="card" style="padding:18px">
           <div class="section-muted" style="margin-bottom:10px">Últimos contatos</div>
-          ${lastContacts.length ? lastContacts.map(h => `<div class="cx-mini-row"><span>${HISTORY_TYPES[h.type]?.[1] || '📝'}</span><div style="flex:1;min-width:0"><div style="font-size:12px;color:var(--text-muted)">${fmtDT(h.at)} · ${HISTORY_TYPES[h.type]?.[0] || 'Anotação'}</div><div style="font-size:13px">${esc(h.text)}</div></div></div>`).join('') : '<div style="font-size:12px;color:var(--text-muted)">Nenhum contato registrado.</div>'}
+          ${lastContacts.length ? lastContacts.map(h => `<div class="cx-mini-row"><span>${HISTORY_TYPES[h.type]?.[1] || '📝'}</span><div style="flex:1;min-width:0"><div style="font-size:13.5px;color:var(--text-muted)">${fmtDT(h.at)} · ${HISTORY_TYPES[h.type]?.[0] || 'Anotação'}</div><div style="font-size:14.5px">${esc(h.text)}</div></div></div>`).join('') : '<div style="font-size:13.5px;color:var(--text-muted)">Nenhum contato registrado.</div>'}
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:14px">
         <div class="card" style="padding:16px">
           <div class="section-muted" style="margin-bottom:10px">Processos</div>
-          ${s.cases.length ? s.cases.map(c => `<div class="cx-mini-row" style="cursor:pointer" onclick="selectCase('${esc(c.id)}')"><div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">${esc(c.title)}</div><div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">${esc(c.number || 'sem número')}</div></div>${statusBadge(c.status)}</div>`).join('') : '<div style="font-size:12px;color:var(--text-muted)">Nenhum processo vinculado.</div>'}
+          ${s.cases.length ? s.cases.map(c => `<div class="cx-mini-row" style="cursor:pointer" onclick="selectCase('${esc(c.id)}')"><div style="flex:1;min-width:0"><div style="font-size:14.5px;font-weight:500">${esc(c.title)}</div><div style="font-size:12.5px;color:var(--text-muted);font-family:var(--font-mono)">${esc(c.number || 'sem número')}</div></div>${statusBadge(c.status)}</div>`).join('') : '<div style="font-size:13.5px;color:var(--text-muted)">Nenhum processo vinculado.</div>'}
         </div>
         <div class="card" style="padding:16px">
           <div class="section-muted" style="margin-bottom:10px">Próximos prazos</div>
-          ${upcoming.length ? upcoming.map(e => `<div class="cx-mini-row"><div style="flex:1;min-width:0"><div style="font-size:13px">${esc(e.title)}</div><div style="font-size:11px;color:var(--text-muted)">${fmtBR(e.date)} · ${daysLabel(e)}</div></div></div>`).join('') : '<div style="font-size:12px;color:var(--text-muted)">Nada pendente.</div>'}
+          ${upcoming.length ? upcoming.map(e => `<div class="cx-mini-row"><div style="flex:1;min-width:0"><div style="font-size:14.5px">${esc(e.title)}</div><div style="font-size:12.5px;color:var(--text-muted)">${fmtBR(e.date)} · ${daysLabel(e)}</div></div></div>`).join('') : '<div style="font-size:13.5px;color:var(--text-muted)">Nada pendente.</div>'}
         </div>
         <div class="card" style="padding:16px">
           <div class="section-muted" style="margin-bottom:10px">Documentos pendentes</div>
-          ${pend.length ? pend.map(p => `<div class="cx-mini-row" style="cursor:pointer" onclick="openCaseTab('${esc(p.c.id)}','checklist')"><div style="font-size:12px;line-height:1.4">${esc(p.text)}</div></div>`).join('') + `<div style="font-size:11px;color:var(--text-muted);margin-top:6px">${s.pendDocs} no total — clique para abrir o checklist.</div>` : '<div style="font-size:12px;color:var(--text-muted)">Nada pendente nos checklists.</div>'}
+          ${pend.length ? pend.map(p => `<div class="cx-mini-row" style="cursor:pointer" onclick="openCaseTab('${esc(p.c.id)}','checklist')"><div style="font-size:13.5px;line-height:1.4">${esc(p.text)}</div></div>`).join('') + `<div style="font-size:12.5px;color:var(--text-muted);margin-top:6px">${s.pendDocs} no total — clique para abrir o checklist.</div>` : '<div style="font-size:13.5px;color:var(--text-muted)">Nada pendente nos checklists.</div>'}
         </div>
         <div class="card" style="padding:16px">
           <div class="section-muted" style="margin-bottom:10px">Zona de risco</div>
@@ -5786,8 +5822,8 @@ function caseRowHtml(c) {
         <div style="flex:1;min-width:220px">
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${statusBadge(c.status)}${phaseBadge(c.phase)}${riskBadge(c.riskLevel)}</div>
           <div style="font-size:14px;font-weight:600">${esc(c.title)}</div>
-          <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono)">${esc(c.number || 'sem número')}</div>
-          <div style="font-size:12px;color:var(--text-secondary);margin-top:6px">${[c.benefit, c.court].filter(Boolean).map(x => esc(x)).join(' · ')}</div>
+          <div style="font-size:13.5px;color:var(--text-muted);font-family:var(--font-mono)">${esc(c.number || 'sem número')}</div>
+          <div style="font-size:13.5px;color:var(--text-secondary);margin-top:6px">${[c.benefit, c.court].filter(Boolean).map(x => esc(x)).join(' · ')}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
             ${c.nextHearing ? `<span class="badge badge-blue">Audiência ${fmtBR(c.nextHearing)}${dh != null && dh >= 0 ? ` (${dh === 0 ? 'hoje' : 'em ' + dh + 'd'})` : ''}</span>` : ''}
             ${pend ? `<span class="badge badge-gold">${pend} doc(s) pendente(s)</span>` : ''}
@@ -5818,9 +5854,9 @@ window.openLinkClientModal = function () {
   const clients = [...state.clients].sort(byName)
   cxModal('cx-linkclient', 'Vincular cliente ao processo', `
     <div style="display:flex;flex-direction:column;gap:14px">
-      <div style="font-size:12px;color:var(--text-muted)">Vincule este processo a um cadastro completo de cliente para reunir documentos, prazos e depoimentos em um só lugar.</div>
+      <div style="font-size:13.5px;color:var(--text-muted)">Vincule este processo a um cadastro completo de cliente para reunir documentos, prazos e depoimentos em um só lugar.</div>
       <div class="field"><label>Cliente já cadastrado</label><select id="lc-client"><option value="">— Selecione —</option>${clients.map(cl => `<option value="${esc(cl.id)}">${esc(cl.name)}</option>`).join('')}</select></div>
-      <div style="font-size:12px;color:var(--text-muted);text-align:center">— ou —</div>
+      <div style="font-size:13.5px;color:var(--text-muted);text-align:center">— ou —</div>
       <button class="btn btn-secondary" onclick="closeCxModal('cx-linkclient');newClientFromCase()">＋ Cadastrar novo cliente com estes dados</button>
     </div>`,
     `<button class="btn btn-ghost" onclick="closeCxModal('cx-linkclient')">Cancelar</button><button class="btn btn-primary" onclick="confirmLinkClient()">Vincular</button>`)
@@ -5902,8 +5938,8 @@ function recCompactRow(r) {
     <div class="cx-rec">
       <div style="font-size:22px">🎥</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600">${esc(r.nomePessoa || 'Depoimento')}</div>
-        <div style="font-size:12px;color:var(--text-muted);margin:2px 0 6px">${esc(r.tipoDepoimento || '—')} · ${fmtDT(r.criadoEm || r.dataInicio)} · ${esc(r.duracao || '—')}</div>
+        <div style="font-size:14.5px;font-weight:600">${esc(r.nomePessoa || 'Depoimento')}</div>
+        <div style="font-size:13.5px;color:var(--text-muted);margin:2px 0 6px">${esc(r.tipoDepoimento || '—')} · ${fmtDT(r.criadoEm || r.dataInicio)} · ${esc(r.duracao || '—')}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">${badges}</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px">
@@ -5931,13 +5967,13 @@ window.openRecDetail = function (id) {
   const a = r.analise
   const notes = [...(r.anotacoes || [])].sort((x, y) => x.t - y.t)
   const qs = [...(r.perguntas || [])].sort((x, y) => x.t - y.t)
-  cxModal('cx-rec', `${esc(r.nomePessoa || 'Depoimento')} <span style="font-weight:400;color:var(--text-muted);font-size:12px">· ${esc(r.tipoDepoimento || '')}</span>`, `
-    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${fmtDT(r.criadoEm || r.dataInicio)} · ${esc(r.duracao || '—')}${r.cidade ? ' · ' + esc(r.cidade) + (r.estado ? '/' + esc(r.estado) : '') : ''}${r.roteiroNome ? ' · Roteiro: ' + esc(r.roteiroNome) : ''}</div>
-    ${qs.length ? `<div class="section-muted" style="margin-bottom:6px">Perguntas do roteiro feitas</div>${qs.map(q => `<div class="cx-mini-row"><span class="cx-time">${formatTime(q.t)}</span><div style="font-size:13px;flex:1">${esc(q.text)}</div></div>`).join('')}` : ''}
-    ${notes.length ? `<div class="section-muted" style="margin:14px 0 6px">Anotações durante a gravação</div>${notes.map(n => `<div class="cx-mini-row"><span class="cx-time">${formatTime(n.t)}</span><div style="font-size:13px;flex:1">${esc(n.text)}</div></div>`).join('')}` : ''}
-    ${!qs.length && !notes.length ? '<div style="font-size:12px;color:var(--text-muted)">Sem anotações nem perguntas marcadas nesta gravação.</div>' : ''}
-    ${a?.resumo ? `<div class="section-muted" style="margin:14px 0 6px">Resumo da IA</div><div style="font-size:13px;line-height:1.6;color:var(--text-secondary)">${esc(a.resumo)}</div>` : ''}
-    ${a?.transcricao ? `<details style="margin-top:12px"><summary style="font-size:12px;font-weight:600;color:var(--text-muted);cursor:pointer">Transcrição</summary><div style="font-size:12px;line-height:1.8;color:var(--text-secondary);margin-top:8px;max-height:240px;overflow-y:auto;white-space:pre-wrap">${esc(a.transcricao)}</div></details>` : ''}`,
+  cxModal('cx-rec', `${esc(r.nomePessoa || 'Depoimento')} <span style="font-weight:400;color:var(--text-muted);font-size:13.5px">· ${esc(r.tipoDepoimento || '')}</span>`, `
+    <div style="font-size:13.5px;color:var(--text-muted);margin-bottom:12px">${fmtDT(r.criadoEm || r.dataInicio)} · ${esc(r.duracao || '—')}${r.cidade ? ' · ' + esc(r.cidade) + (r.estado ? '/' + esc(r.estado) : '') : ''}${r.roteiroNome ? ' · Roteiro: ' + esc(r.roteiroNome) : ''}</div>
+    ${qs.length ? `<div class="section-muted" style="margin-bottom:6px">Perguntas do roteiro feitas</div>${qs.map(q => `<div class="cx-mini-row"><span class="cx-time">${formatTime(q.t)}</span><div style="font-size:14.5px;flex:1">${esc(q.text)}</div></div>`).join('')}` : ''}
+    ${notes.length ? `<div class="section-muted" style="margin:14px 0 6px">Anotações durante a gravação</div>${notes.map(n => `<div class="cx-mini-row"><span class="cx-time">${formatTime(n.t)}</span><div style="font-size:14.5px;flex:1">${esc(n.text)}</div></div>`).join('')}` : ''}
+    ${!qs.length && !notes.length ? '<div style="font-size:13.5px;color:var(--text-muted)">Sem anotações nem perguntas marcadas nesta gravação.</div>' : ''}
+    ${a?.resumo ? `<div class="section-muted" style="margin:14px 0 6px">Resumo da IA</div><div style="font-size:14.5px;line-height:1.6;color:var(--text-secondary)">${esc(a.resumo)}</div>` : ''}
+    ${a?.transcricao ? `<details style="margin-top:12px"><summary style="font-size:13.5px;font-weight:600;color:var(--text-muted);cursor:pointer">Transcrição</summary><div style="font-size:13.5px;line-height:1.8;color:var(--text-secondary);margin-top:8px;max-height:240px;overflow-y:auto;white-space:pre-wrap">${esc(a.transcricao)}</div></details>` : ''}`,
     `${(r.videoUrl || r.url || r._blob) && !a?.transcricao && !r._analisando ? `<button class="btn btn-secondary" onclick="closeCxModal('cx-rec');transcribeRec('${esc(r.id)}')">📝 Transcrever agora</button>` : ''}
      ${(r.videoUrl || r.url || r._blob) ? `<button class="btn btn-primary" onclick="closeCxModal('cx-rec');watchRecording('${esc(r.id)}')">▶ Assistir</button>` : ''}
      <button class="btn btn-ghost" onclick="closeCxModal('cx-rec')">Fechar</button>`, true)
@@ -5979,7 +6015,7 @@ function cxTabIA(cl) {
     <div style="max-width:820px;display:flex;flex-direction:column;gap:14px">
       <div class="card" style="padding:20px">
         <div style="font-size:14px;font-weight:600;margin-bottom:4px">Lexis AI — visão geral do cliente</div>
-        <div style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:14px">A Lexis lê processos, períodos da linha do tempo, prazos, documentos anexados, anotações e transcrições dos depoimentos deste cliente e devolve um panorama com pontos de atenção.
+        <div style="font-size:13.5px;color:var(--text-muted);line-height:1.6;margin-bottom:14px">A Lexis lê processos, períodos da linha do tempo, prazos, documentos anexados, anotações e transcrições dos depoimentos deste cliente e devolve um panorama com pontos de atenção.
           CPF, RG, endereço, telefone e e-mail <b>não</b> são enviados à IA.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" id="cx-ai-btn" onclick="generateClientSummary('${esc(cl.id)}')">✨ Gerar panorama do cliente</button>
@@ -5990,7 +6026,7 @@ function cxTabIA(cl) {
       <div id="cx-ai-out">${out ? `<div class="card report-content" style="padding:20px">${mdToHtml(out)}</div>` : ''}</div>
       <div class="card" style="padding:16px">
         <div class="section-muted" style="margin-bottom:8px">Em preparação</div>
-        <div style="font-size:12px;color:var(--text-muted);line-height:1.7">Os documentos, roteiros, transcrições e anotações já ficam organizados por cliente e processo — é a base para a Lexis, futuramente, cruzar documentos com depoimentos, apontar contradições e sugerir teses automaticamente. A análise de PDF e áudio individual continua disponível na aba Documentos do processo.</div>
+        <div style="font-size:13.5px;color:var(--text-muted);line-height:1.7">Os documentos, roteiros, transcrições e anotações já ficam organizados por cliente e processo — é a base para a Lexis, futuramente, cruzar documentos com depoimentos, apontar contradições e sugerir teses automaticamente. A análise de PDF e áudio individual continua disponível na aba Documentos do processo.</div>
       </div>
     </div>`
 }
@@ -5998,7 +6034,7 @@ function cxTabIA(cl) {
 window.generateClientSummary = async function (id) {
   const cl = clientById(id); if (!cl) return
   const btn = el('cx-ai-btn'); if (btn) { btn.disabled = true; btn.innerHTML = `${spinner()} Analisando…` }
-  set('cx-ai-out', `<div class="card" style="padding:20px;display:flex;gap:12px;align-items:center">${spinner('spinner-lg')}<div style="font-size:13px">Reunindo o histórico do cliente…</div></div>`)
+  set('cx-ai-out', `<div class="card" style="padding:20px;display:flex;gap:12px;align-items:center">${spinner('spinner-lg')}<div style="font-size:14.5px">Reunindo o histórico do cliente…</div></div>`)
   try {
     const recs = await recsForClient(cl)
     const dossier = buildClientDossier(cl, recs)
@@ -6113,7 +6149,7 @@ function docUploadCard(fixedClient) {
   const cid = fixedClient?.id || ''
   return `
     <div class="card" style="padding:18px;margin-bottom:16px">
-      <div style="font-size:13px;font-weight:600;margin-bottom:12px">Enviar documentos</div>
+      <div style="font-size:14.5px;font-weight:600;margin-bottom:12px">Enviar documentos</div>
       <div class="grid-3" style="gap:12px;margin-bottom:12px">
         ${fixedClient
           ? `<input type="hidden" id="up-client" value="${esc(cid)}" />`
@@ -6124,11 +6160,11 @@ function docUploadCard(fixedClient) {
       <div class="upload-zone" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="cxDropFiles(event)" onclick="el('up-file').click()">
         <div style="font-size:24px;margin-bottom:6px;opacity:.5">📎</div>
         <div style="font-size:14px;font-weight:500">Arraste os arquivos ou clique para escolher</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">PDF, imagens, Word, áudio e vídeo · vários de uma vez</div>
+        <div style="font-size:13.5px;color:var(--text-muted);margin-top:4px">PDF, imagens, Word, áudio e vídeo · vários de uma vez</div>
       </div>
       <input type="file" id="up-file" style="display:none" multiple onchange="cxPickFiles(this)" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.heic,.webp,.mp3,.wav,.mp4,.webm,.ogg,.zip,.xls,.xlsx" />
       <div id="up-status" style="margin-top:10px"></div>
-      ${state._docMsg ? `<div class="alert-warn" style="margin-top:10px;font-size:12px;white-space:pre-line">${esc(state._docMsg)}</div>` : ''}
+      ${state._docMsg ? `<div class="alert-warn" style="margin-top:10px;font-size:13.5px;white-space:pre-line">${esc(state._docMsg)}</div>` : ''}
     </div>`
 }
 
@@ -6146,13 +6182,13 @@ function docRowHtml(d, showClient) {
   return `
     <tr>
       <td><div style="display:flex;align-items:center;gap:10px"><span style="font-size:20px">${docIcon(d)}</span>
-        <div style="min-width:0"><div style="font-size:13px;font-weight:500;word-break:break-word">${esc(d.name)}</div>
-        ${d.local ? '<span style="font-size:11px;color:var(--risk-med)">só nesta sessão</span>' : ''}${d.note ? `<div style="font-size:11px;color:var(--text-muted)">${esc(d.note)}</div>` : ''}</div></div></td>
-      ${showClient ? `<td><a href="#" style="color:var(--accent-blue);font-size:13px" onclick="openClient('${esc(d.clientId)}','documentos');return false">${esc(cl?.name || '—')}</a></td>` : ''}
-      <td style="font-size:12px;color:var(--text-secondary)">${c ? esc(c.title) : '<span style="color:var(--text-muted)">Geral do cliente</span>'}</td>
+        <div style="min-width:0"><div style="font-size:14.5px;font-weight:500;word-break:break-word">${esc(d.name)}</div>
+        ${d.local ? '<span style="font-size:12.5px;color:var(--risk-med)">só nesta sessão</span>' : ''}${d.note ? `<div style="font-size:12.5px;color:var(--text-muted)">${esc(d.note)}</div>` : ''}</div></div></td>
+      ${showClient ? `<td><a href="#" style="color:var(--accent-blue);font-size:14.5px" onclick="openClient('${esc(d.clientId)}','documentos');return false">${esc(cl?.name || '—')}</a></td>` : ''}
+      <td style="font-size:13.5px;color:var(--text-secondary)">${c ? esc(c.title) : '<span style="color:var(--text-muted)">Geral do cliente</span>'}</td>
       <td><span class="badge badge-neutral">${esc(DOC_CATEGORIES[d.category] || 'Outros')}</span></td>
-      <td style="font-size:12px;color:var(--text-muted)">${fmtDT(d.uploadedAt).split(',')[0]}</td>
-      <td style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono)">${esc(d.size || '—')}</td>
+      <td style="font-size:13.5px;color:var(--text-muted)">${fmtDT(d.uploadedAt).split(',')[0]}</td>
+      <td style="font-size:13.5px;color:var(--text-muted);font-family:var(--font-mono)">${esc(d.size || '—')}</td>
       <td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="openClientDoc('${esc(d.clientId)}','${esc(d.id)}')">Abrir</button>
         <button class="btn btn-ghost btn-sm" onclick="openDocEdit('${esc(d.clientId)}','${esc(d.id)}')">Editar</button>
         <button class="btn btn-ghost btn-sm" style="color:var(--risk-high)" onclick="removeClientDoc('${esc(d.clientId)}','${esc(d.id)}')">✕</button></td>
@@ -6224,7 +6260,7 @@ function renderDocuments() {
     <div class="card" style="overflow:hidden;margin-bottom:20px" id="docs-all"></div>
     <div class="card" style="overflow:hidden">
       <div style="padding:16px 20px;border-bottom:1px solid var(--border)"><span class="section-title">Documentos pendentes por processo</span>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Conforme o checklist de cada benefício. Clique para abrir o checklist do processo.</div></div>
+        <div style="font-size:13.5px;color:var(--text-muted);margin-top:2px">Conforme o checklist de cada benefício. Clique para abrir o checklist do processo.</div></div>
       <div id="docs-pending"></div>
     </div>`)
   drawDocsAll()
@@ -6246,9 +6282,9 @@ function drawDocsPending() {
     .filter(r => r.pend.length).sort((a, b) => b.pend.length - a.pend.length)
   set('docs-pending', rows.length ? `<div class="table-scroll"><table><thead><tr><th>Processo</th><th>Cliente</th><th>Pendentes</th><th></th></tr></thead><tbody>
     ${rows.map(({ c, pend, total }) => `<tr style="cursor:pointer" onclick="openCaseTab('${esc(c.id)}','checklist')">
-      <td><div style="font-weight:500">${esc(c.title)}</div><div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">${esc(c.number || '—')}</div></td>
-      <td style="font-size:13px">${esc(c.clientName || '—')}</td>
-      <td style="width:180px">${progressBar(total ? Math.round((total - pend.length) / total * 100) : 0, 'var(--accent-blue)', 5)}<span style="font-size:11px;color:var(--text-muted)">${pend.length} de ${total} pendentes</span></td>
+      <td><div style="font-weight:500">${esc(c.title)}</div><div style="font-size:12.5px;color:var(--text-muted);font-family:var(--font-mono)">${esc(c.number || '—')}</div></td>
+      <td style="font-size:14.5px">${esc(c.clientName || '—')}</td>
+      <td style="width:180px">${progressBar(total ? Math.round((total - pend.length) / total * 100) : 0, 'var(--accent-blue)', 5)}<span style="font-size:12.5px;color:var(--text-muted)">${pend.length} de ${total} pendentes</span></td>
       <td style="text-align:right"><span class="btn btn-ghost btn-sm">Abrir checklist →</span></td></tr>`).join('')}
     </tbody></table></div>` : `<div class="empty-state" style="padding:28px"><div class="empty-title">Nenhuma pendência</div><div class="empty-desc">Todos os checklists dos processos abertos estão completos.</div></div>`)
 }
@@ -6282,7 +6318,7 @@ async function loadLegacyDocs(cl) {
     <div class="card" style="overflow:hidden;margin-top:16px">
       <div style="padding:14px 20px;border-bottom:1px solid var(--border)"><span class="section-title">Anexos da ação (envio anterior)</span></div>
       <div class="table-scroll"><table><thead><tr><th>Arquivo</th><th>Processo</th><th>Data</th><th>Status IA</th></tr></thead><tbody>
-      ${docs.map(d => `<tr><td>${d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:var(--accent-blue)">${esc(d.name)}</a>` : esc(d.name)}</td><td style="font-size:12px">${esc(d._case.title)}</td><td style="font-size:12px;color:var(--text-muted)">${d.uploadedAt?.toDate ? fmt.date(d.uploadedAt.toDate()) : fmt.date(d.uploadedAt)}</td><td>${statusBadge(d.aiStatus || 'pending')}</td></tr>`).join('')}
+      ${docs.map(d => `<tr><td>${d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:var(--accent-blue)">${esc(d.name)}</a>` : esc(d.name)}</td><td style="font-size:13.5px">${esc(d._case.title)}</td><td style="font-size:13.5px;color:var(--text-muted)">${d.uploadedAt?.toDate ? fmt.date(d.uploadedAt.toDate()) : fmt.date(d.uploadedAt)}</td><td>${statusBadge(d.aiStatus || 'pending')}</td></tr>`).join('')}
       </tbody></table></div></div>`
 }
 

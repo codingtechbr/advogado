@@ -1,13 +1,13 @@
 {
-  "name": "Lexis AI — Instrução Concentrada Previdenciária",
+  "name": "Lexis AI — Gestão de Processos Previdenciários",
   "short_name": "Lexis AI",
-  "description": "Preparação e condução de audiências previdenciárias",
+  "description": "Clientes, processos, prazos e audiências previdenciárias",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#09090b",
-  "theme_color": "#09090b",
+  "background_color": "#f4f5f8",
+  "theme_color": "#0f1d3a",
   "lang": "pt-BR",
   "icons": [
     {
